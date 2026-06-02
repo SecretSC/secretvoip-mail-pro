@@ -11,6 +11,7 @@ import {
   X,
   History,
 } from "lucide-react";
+import { CustomerHistoryModal } from "@/components/customer-history-modal";
 
 export const Route = createFileRoute("/app/admin/")({
   component: CustomersPage,
@@ -24,6 +25,7 @@ function CustomersPage() {
   const [creating, setCreating] = useState(false);
   const [walletFor, setWalletFor] = useState<Customer | null>(null);
   const [passwordFor, setPasswordFor] = useState<Customer | null>(null);
+  const [historyFor, setHistoryFor] = useState<Customer | null>(null);
 
   async function load() {
     try {
@@ -131,6 +133,12 @@ function CustomersPage() {
                   </td>
                   <td className="px-5 py-3 text-right whitespace-nowrap">
                     <button
+                      onClick={() => setHistoryFor(c)}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-md text-foreground hover:bg-primary/10 hover:text-primary"
+                    >
+                      <History size={12} /> History
+                    </button>
+                    <button
                       onClick={() => setWalletFor(c)}
                       className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-md text-info hover:bg-info/10"
                     >
@@ -191,6 +199,12 @@ function CustomersPage() {
         <PasswordModal
           customer={passwordFor}
           onClose={() => setPasswordFor(null)}
+        />
+      )}
+      {historyFor && (
+        <CustomerHistoryModal
+          customer={historyFor}
+          onClose={() => setHistoryFor(null)}
         />
       )}
     </div>

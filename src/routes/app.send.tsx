@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
-import { Send, Wallet, AlertCircle, CheckCircle2 } from "lucide-react";
-import { api } from "@/lib/api";
+import { useEffect, useMemo, useState } from "react";
+import { Send, Wallet, AlertCircle, CheckCircle2, FileText, Save } from "lucide-react";
+import { api, type Template } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { toast } from "sonner";
 
@@ -40,8 +40,6 @@ function parseRecipients(raw: string) {
   return { valid, invalid, duplicates };
 }
 
-const PRICE_PER_EMAIL = 0.003; // display estimate; backend is source of truth
-
 export function SendEmailPage() {
   const { user, refresh } = useAuth();
   const [fromName, setFromName] = useState("");
@@ -54,9 +52,45 @@ export function SendEmailPage() {
     failed: number;
     total: number;
   } | null>(null);
+  const [templates, setTemplates] = useState<Template[]>([]);
+  const [pricePerEmail, setPricePerEmail] = useState(0.003);
+
+  useEffect(() => {
+    api.templates().then(setTemplates).catch(() => {});
+    api.publicSettings()
+      .then((s) => {
+        const v = Number(s.price_per_email);
+        if (!Number.isNaN(v) && v > 0) setPricePerEmail(v);
+      })
+      .catch(() => {});
+  }, []);
 
   const parsed = useMemo(() => parseRecipients(recipientsRaw), [recipientsRaw]);
-  const estimate = parsed.valid.length * PRICE_PER_EMAIL;
+  const estimate = parsed.valid.length * pricePerEmail;
+
+  function loadTemplate(id: string) {
+    const t = templates.find((x) => x.id === id);
+    if (!t) return;
+    setSubject(t.subject);
+    setHtml(t.html);
+    toast.success(`Loaded template "${t.name}"`);
+  }
+
+  async function saveAsTemplate() {
+    const name = window.prompt("Template name");
+    if (!name?.trim()) return;
+    if (!subject.trim() || !html.trim()) {
+      toast.error("Subject and HTML required to save a template");
+      return;
+    }
+    try {
+      await api.createTemplate({ name: name.trim(), subject, html });
+      toast.success("Template saved");
+      setTemplates(await api.templates());
+    } catch (e: any) {
+      toast.error(e?.message || "Save failed");
+    }
+  }
 
   function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -118,6 +152,32 @@ export function SendEmailPage() {
         </header>
 
         <form onSubmit={onSend} className="mt-8 space-y-6">
+          <div className="glass rounded-2xl p-4 flex flex-wrap items-center gap-3">
+            <FileText size={16} className="text-info" />
+            <span className="text-xs text-muted-foreground">Load template:</span>
+            <select
+              className="input max-w-xs"
+              defaultValue=""
+              onChange={(e) => {
+                if (e.target.value) loadTemplate(e.target.value);
+                e.target.value = "";
+              }}
+            >
+              <option value="">— Choose a saved template —</option>
+              {templates.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={saveAsTemplate}
+              className="ml-auto inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md glass hover:bg-card/60"
+            >
+              <Save size={12} /> Save current as template
+            </button>
+          </div>
           <div className="glass rounded-2xl p-6 space-y-5">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
               <Field label="From name *">
@@ -231,7 +291,7 @@ export function SendEmailPage() {
             <Row k="Recipients" v={parsed.valid.length.toLocaleString()} />
             <Row k="Invalid" v={parsed.invalid.length.toString()} muted />
             <Row k="Duplicates" v={parsed.duplicates.toString()} muted />
-            <Row k="Per email" v={`${PRICE_PER_EMAIL.toFixed(3)} €`} />
+            <Row k="Per email" v={`${pricePerEmail.toFixed(3)} €`} />
             <div className="h-px bg-border my-2" />
             <Row
               k="Estimated cost"

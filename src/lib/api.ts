@@ -277,9 +277,48 @@ export const api = {
       body: JSON.stringify({ notes }),
     }),
   adminDiagnostics: () =>
-    request<{ db: boolean; uptimeSec: number; timestamp: string; latencyMs: number }>(
-      "/api/admin/diagnostics",
-    ),
+    request<{
+      db: boolean;
+      uptimeSec: number;
+      timestamp: string;
+      latencyMs: number;
+      provider: { configured: boolean; baseHost: string };
+    }>("/api/admin/diagnostics"),
+  adminProviderTest: () =>
+    request<{
+      ok: boolean;
+      status?: number;
+      latencyMs: number;
+      reachable: boolean;
+      authOk?: boolean;
+      responsePreview?: string;
+      error?: string;
+    }>("/api/admin/provider/test", { method: "POST" }),
+
+  adminCustomerHistory: (id: string) =>
+    request<{
+      profile: Customer;
+      campaigns: (Campaign & {
+        pricePerEmail: number;
+        providerCostPerEmail: number;
+        providerCost: number;
+        profit: number;
+        error: string | null;
+      })[];
+      wallet: WalletTx[];
+      activity: { id: string; action: string; metadata: any; createdAt: string }[];
+      totals: {
+        accepted: number;
+        failed: number;
+        revenue: number;
+        providerCost: number;
+        profit: number;
+      };
+    }>(`/api/admin/customers/${id}/history`),
+  exportCustomerCampaignsCsv: (id: string) =>
+    downloadFile(`/api/admin/customers/${id}/campaigns.csv`, `customer-${id}-campaigns.csv`),
+  exportCustomerWalletCsv: (id: string) =>
+    downloadFile(`/api/admin/customers/${id}/wallet.csv`, `customer-${id}-wallet.csv`),
 
   // Settings
   settings: () => request<Record<string, any>>("/api/settings"),

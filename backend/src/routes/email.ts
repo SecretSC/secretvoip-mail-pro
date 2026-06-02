@@ -41,18 +41,27 @@ router.post("/send", requireAuth, async (req, res) => {
     return res.status(400).json({ error: "No valid recipients" });
   }
 
-  // Pre-flight balance check: require >= 1 email worth of credit
-  if (user.balance < config.pricePerEmail) {
+  // Resolve effective pricing from settings (fallback to env defaults)
+  const { rows: settingRows } = await query<{ key: string; value: any }>(
+    `SELECT key, value FROM settings WHERE key IN ('price_per_email','provider_cost_per_email')`,
+  );
+  const settingsMap = Object.fromEntries(settingRows.map((r) => [r.key, r.value]));
+  const pricePerEmail = Number(settingsMap.price_per_email ?? config.pricePerEmail) || 0;
+  const providerCostPerEmail = Number(settingsMap.provider_cost_per_email ?? 0.001) || 0;
+
+  // Pre-flight balance check
+  if (user.balance < pricePerEmail) {
     return res.status(402).json({ error: "Insufficient wallet balance" });
   }
 
-  // Create campaign row up front so we have an ID for logging
+  // Create campaign row up front with historical price snapshot
   const { rows: campRows } = await query<{ id: string }>(
     `INSERT INTO email_campaigns
-        (user_id, from_name, subject, html, total, accepted, failed, cost, status)
-     VALUES ($1, $2, $3, $4, $5, 0, 0, 0, 'sending')
+        (user_id, from_name, subject, html, total, accepted, failed, cost, status,
+         price_per_email, provider_cost_per_email)
+     VALUES ($1, $2, $3, $4, $5, 0, 0, 0, 'sending', $6, $7)
      RETURNING id`,
-    [user.id, fromName, subject, html, cleanRecipients.length],
+    [user.id, fromName, subject, html, cleanRecipients.length, pricePerEmail, providerCostPerEmail],
   );
   const campaignId = campRows[0].id;
 
@@ -128,7 +137,18 @@ router.post("/send", requireAuth, async (req, res) => {
 
   const accepted = results.filter((r) => r.ok).length;
   const failed = results.length - accepted;
-  const cost = +(accepted * config.pricePerEmail).toFixed(6);
+  const cost = +(accepted * pricePerEmail).toFixed(6);
+  const providerCost = +(accepted * providerCostPerEmail).toFixed(6);
+  const profit = +(cost - providerCost).toFixed(6);
+
+  // Sanitised provider response — no API key / URL inside.
+  const providerResponseSnapshot = {
+    sent: upstream.sent ?? null,
+    failed: upstream.failed ?? null,
+    total: upstream.total ?? null,
+    hasResults: Array.isArray(upstream.results),
+    httpStatus: upstreamStatus,
+  };
 
   // Persist recipient results + charge wallet in a transaction
   const client = await pool.connect();
@@ -153,12 +173,13 @@ router.post("/send", requireAuth, async (req, res) => {
       );
     }
 
-    // Update campaign
+    // Update campaign incl. profit snapshot
     await client.query(
       `UPDATE email_campaigns
-         SET accepted=$2, failed=$3, cost=$4, status='completed'
+         SET accepted=$2, failed=$3, cost=$4, status='completed',
+             provider_cost=$5, profit=$6, provider_response=$7
        WHERE id=$1`,
-      [campaignId, accepted, failed, cost],
+      [campaignId, accepted, failed, cost, providerCost, profit, JSON.stringify(providerResponseSnapshot)],
     );
 
     // Charge wallet (lock row)

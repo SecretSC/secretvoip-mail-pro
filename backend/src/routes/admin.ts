@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireAuth, requireAdmin, hashPassword } from "../auth.js";
 import { pool, query } from "../db.js";
+import { config } from "../config.js";
 
 const router = Router();
 
@@ -30,7 +31,14 @@ const CreateCustomer = z.object({
 router.post("/customers", async (req, res) => {
   const parsed = CreateCustomer.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid input" });
-  const { email, fullName, password, balance, notes } = parsed.data;
+  // Trim defensively — autocomplete / paste often inserts whitespace.
+  const email = parsed.data.email.trim().toLowerCase();
+  const fullName = parsed.data.fullName.trim();
+  const password = parsed.data.password; // do NOT mutate; preserves exact chars admin showed customer
+  const { balance, notes } = parsed.data;
+  if (password.trim().length < 8) {
+    return res.status(400).json({ error: "Password must be at least 8 visible characters" });
+  }
   const passwordHash = await hashPassword(password);
   try {
     const { rows } = await query<{ id: string }>(
@@ -44,6 +52,7 @@ router.post("/customers", async (req, res) => {
        VALUES ($1, 'create_customer', $2, $3)`,
       [req.user!.id, rows[0].id, JSON.stringify({ email, fullName, balance })],
     );
+    console.log(`[admin] created customer ${email} (id=${rows[0].id})`);
     res.json({ id: rows[0].id });
   } catch (err: any) {
     if (err?.code === "23505")
@@ -72,19 +81,23 @@ router.post("/customers/:id/status", async (req, res) => {
 
 // Reset password
 router.post("/customers/:id/password", async (req, res) => {
-  const password = String(req.body?.password || "");
+  const raw = String(req.body?.password ?? "");
+  // Trim leading/trailing whitespace defensively — these almost always come from paste.
+  const password = raw.replace(/^\s+|\s+$/g, "");
   if (password.length < 8)
-    return res.status(400).json({ error: "Password too short" });
+    return res.status(400).json({ error: "Password must be at least 8 characters" });
   const hash = await hashPassword(password);
-  await query(`UPDATE users SET password_hash=$2 WHERE id=$1`, [
-    req.params.id,
-    hash,
-  ]);
+  const { rowCount } = await query(
+    `UPDATE users SET password_hash=$2 WHERE id=$1 AND role IN ('customer','admin')`,
+    [req.params.id, hash],
+  );
+  if (rowCount === 0) return res.status(404).json({ error: "User not found" });
   await query(
     `INSERT INTO audit_logs (admin_id, action, target_user_id, changes)
      VALUES ($1, 'reset_password', $2, $3)`,
     [req.user!.id, req.params.id, JSON.stringify({})],
   );
+  console.log(`[admin] reset password for user id=${req.params.id}`);
   res.json({ ok: true });
 });
 
@@ -139,7 +152,7 @@ router.post("/customers/:id/wallet", async (req, res) => {
   }
 });
 
-// Diagnostics
+// Diagnostics — DB, uptime, provider config status
 router.get("/diagnostics", async (_req, res) => {
   const t0 = Date.now();
   let dbOk = false;
@@ -152,7 +165,60 @@ router.get("/diagnostics", async (_req, res) => {
     uptimeSec: Math.round(process.uptime()),
     timestamp: new Date().toISOString(),
     latencyMs: Date.now() - t0,
+    provider: {
+      configured: Boolean(config.mailProviderApiKey && config.mailProviderBaseUrl),
+      // We intentionally do NOT expose the full URL or any part of the key.
+      baseHost: safeHost(config.mailProviderBaseUrl),
+    },
   });
+});
+
+function safeHost(u: string): string {
+  try {
+    return new URL(u).host;
+  } catch {
+    return "—";
+  }
+}
+
+// Live provider connection test — admin-only
+router.post("/provider/test", async (_req, res) => {
+  const t0 = Date.now();
+  try {
+    const resp = await fetch(`${config.mailProviderBaseUrl}/api/public/send`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${config.mailProviderApiKey}`,
+      },
+      // Empty recipient list — provider should reply with a validation error
+      // quickly, which is enough to prove auth + connectivity.
+      body: JSON.stringify({
+        fromName: "SecretVoIP Mail Diagnostics",
+        subject: "ping",
+        html: "<p>ping</p>",
+        recipients: [],
+      }),
+    });
+    const latency = Date.now() - t0;
+    const text = await resp.text();
+    res.json({
+      ok: resp.status < 500,
+      status: resp.status,
+      latencyMs: latency,
+      reachable: true,
+      // 401 means key invalid; 400 means reached and authed but rejected payload — both prove reachability.
+      authOk: resp.status !== 401 && resp.status !== 403,
+      responsePreview: text.slice(0, 500),
+    });
+  } catch (err: any) {
+    res.json({
+      ok: false,
+      reachable: false,
+      latencyMs: Date.now() - t0,
+      error: String(err?.message || err),
+    });
+  }
 });
 
 // Error log
@@ -213,7 +279,7 @@ router.get("/audit", async (_req, res) => {
   res.json(rows);
 });
 
-// Platform overview stats
+// Platform overview stats (now with profit)
 router.get("/overview", async (_req, res) => {
   const { rows: users } = await query<{ total: number; suspended: number }>(
     `SELECT COUNT(*)::int AS total,
@@ -225,12 +291,16 @@ router.get("/overview", async (_req, res) => {
     accepted: number;
     failed: number;
     revenue: number;
+    providerCost: number;
+    profit: number;
     today: number;
   }>(
     `SELECT COUNT(*)::int AS total,
             COALESCE(SUM(accepted),0)::int AS accepted,
             COALESCE(SUM(failed),0)::int AS failed,
             COALESCE(SUM(cost),0)::float AS revenue,
+            COALESCE(SUM(provider_cost),0)::float AS "providerCost",
+            COALESCE(SUM(profit),0)::float AS profit,
             COALESCE(SUM(CASE WHEN created_at >= date_trunc('day', now())
                               THEN accepted ELSE 0 END),0)::int AS today
        FROM email_campaigns`,
@@ -243,6 +313,104 @@ router.get("/overview", async (_req, res) => {
     campaigns: camp[0],
     errors: errs[0],
   });
+});
+
+// ============================================================
+// Customer history — campaigns + wallet + activity in one go
+// ============================================================
+router.get("/customers/:id/history", async (req, res) => {
+  const id = req.params.id;
+  const { rows: profile } = await query(
+    `SELECT id, email, full_name AS "fullName", role, status,
+            balance::float AS balance, notes, created_at AS "createdAt"
+       FROM users WHERE id=$1`,
+    [id],
+  );
+  if (profile.length === 0) return res.status(404).json({ error: "Not found" });
+
+  const { rows: campaigns } = await query(
+    `SELECT id, from_name AS "fromName", subject, total, accepted, failed,
+            cost::float AS cost,
+            COALESCE(price_per_email,0)::float AS "pricePerEmail",
+            COALESCE(provider_cost_per_email,0)::float AS "providerCostPerEmail",
+            COALESCE(provider_cost,0)::float AS "providerCost",
+            COALESCE(profit,0)::float AS profit,
+            status, error, created_at AS "createdAt"
+       FROM email_campaigns
+      WHERE user_id=$1
+      ORDER BY created_at DESC
+      LIMIT 500`,
+    [id],
+  );
+  const { rows: wallet } = await query(
+    `SELECT id, amount::float AS amount,
+            previous_balance::float AS "previousBalance",
+            new_balance::float AS "newBalance",
+            reason, created_at AS "createdAt"
+       FROM wallet_transactions
+      WHERE user_id=$1
+      ORDER BY created_at DESC
+      LIMIT 500`,
+    [id],
+  );
+  const { rows: activity } = await query(
+    `SELECT id, action, metadata, created_at AS "createdAt"
+       FROM activity_logs WHERE user_id=$1
+      ORDER BY created_at DESC LIMIT 200`,
+    [id],
+  );
+
+  const totals = campaigns.reduce(
+    (acc, c: any) => {
+      acc.accepted += c.accepted;
+      acc.failed += c.failed;
+      acc.revenue += c.cost;
+      acc.providerCost += c.providerCost;
+      acc.profit += c.profit;
+      return acc;
+    },
+    { accepted: 0, failed: 0, revenue: 0, providerCost: 0, profit: 0 },
+  );
+
+  res.json({ profile: profile[0], campaigns, wallet, activity, totals });
+});
+
+// CSV exports for a customer
+function toCsv(rows: any[], cols: string[]): string {
+  const esc = (v: any) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  return [cols.join(","), ...rows.map((r) => cols.map((c) => esc(r[c])).join(","))].join("\n");
+}
+
+router.get("/customers/:id/campaigns.csv", async (req, res) => {
+  const { rows } = await query(
+    `SELECT created_at AS "createdAt", from_name AS "fromName", subject,
+            total, accepted, failed, cost::float AS cost,
+            COALESCE(provider_cost,0)::float AS "providerCost",
+            COALESCE(profit,0)::float AS profit, status
+       FROM email_campaigns WHERE user_id=$1 ORDER BY created_at DESC`,
+    [req.params.id],
+  );
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="customer-${req.params.id}-campaigns.csv"`);
+  res.send(
+    toCsv(rows, [
+      "createdAt", "fromName", "subject", "total", "accepted",
+      "failed", "cost", "providerCost", "profit", "status",
+    ]),
+  );
+});
+
+router.get("/customers/:id/wallet.csv", async (req, res) => {
+  const { rows } = await query(
+    `SELECT created_at AS "createdAt", amount::float AS amount,
+            previous_balance::float AS "previousBalance",
+            new_balance::float AS "newBalance", reason
+       FROM wallet_transactions WHERE user_id=$1 ORDER BY created_at DESC`,
+    [req.params.id],
+  );
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="customer-${req.params.id}-wallet.csv"`);
+  res.send(toCsv(rows, ["createdAt", "amount", "previousBalance", "newBalance", "reason"]));
 });
 
 export default router;
