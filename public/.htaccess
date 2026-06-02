@@ -1,0 +1,11 @@
+# Apache mod_rewrite SPA fallback for /mail/
+# Copied into dist/ at build time. If your VirtualHost already has the
+# RewriteRule below, this file is optional — AllowOverride must be On to use it.
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /mail/
+  RewriteRule ^index\.html$ - [L]
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule . /mail/index.html [L]
+</IfModule>
