@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
-import { Send, Wallet, AlertCircle, CheckCircle2 } from "lucide-react";
-import { api } from "@/lib/api";
+import { useEffect, useMemo, useState } from "react";
+import { Send, Wallet, AlertCircle, CheckCircle2, FileText, Save } from "lucide-react";
+import { api, type Template } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { toast } from "sonner";
 
@@ -40,8 +40,6 @@ function parseRecipients(raw: string) {
   return { valid, invalid, duplicates };
 }
 
-const PRICE_PER_EMAIL = 0.003; // display estimate; backend is source of truth
-
 export function SendEmailPage() {
   const { user, refresh } = useAuth();
   const [fromName, setFromName] = useState("");
@@ -54,9 +52,45 @@ export function SendEmailPage() {
     failed: number;
     total: number;
   } | null>(null);
+  const [templates, setTemplates] = useState<Template[]>([]);
+  const [pricePerEmail, setPricePerEmail] = useState(0.003);
+
+  useEffect(() => {
+    api.templates().then(setTemplates).catch(() => {});
+    api.publicSettings()
+      .then((s) => {
+        const v = Number(s.price_per_email);
+        if (!Number.isNaN(v) && v > 0) setPricePerEmail(v);
+      })
+      .catch(() => {});
+  }, []);
 
   const parsed = useMemo(() => parseRecipients(recipientsRaw), [recipientsRaw]);
-  const estimate = parsed.valid.length * PRICE_PER_EMAIL;
+  const estimate = parsed.valid.length * pricePerEmail;
+
+  function loadTemplate(id: string) {
+    const t = templates.find((x) => x.id === id);
+    if (!t) return;
+    setSubject(t.subject);
+    setHtml(t.html);
+    toast.success(`Loaded template "${t.name}"`);
+  }
+
+  async function saveAsTemplate() {
+    const name = window.prompt("Template name");
+    if (!name?.trim()) return;
+    if (!subject.trim() || !html.trim()) {
+      toast.error("Subject and HTML required to save a template");
+      return;
+    }
+    try {
+      await api.createTemplate({ name: name.trim(), subject, html });
+      toast.success("Template saved");
+      setTemplates(await api.templates());
+    } catch (e: any) {
+      toast.error(e?.message || "Save failed");
+    }
+  }
 
   function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
