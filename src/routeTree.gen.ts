@@ -18,6 +18,7 @@ import { Route as AppSendRouteImport } from './routes/app.send'
 import { Route as AppProfileRouteImport } from './routes/app.profile'
 import { Route as AppHelpRouteImport } from './routes/app.help'
 import { Route as AppCampaignsRouteImport } from './routes/app.campaigns'
+import { Route as AppCampaignsIdRouteImport } from './routes/app.campaigns.$id'
 
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
@@ -64,39 +65,47 @@ const AppCampaignsRoute = AppCampaignsRouteImport.update({
   path: '/campaigns',
   getParentRoute: () => AppRoute,
 } as any)
+const AppCampaignsIdRoute = AppCampaignsIdRouteImport.update({
+  id: '/$id',
+  path: '/$id',
+  getParentRoute: () => AppCampaignsRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
-  '/app/campaigns': typeof AppCampaignsRoute
+  '/app/campaigns': typeof AppCampaignsRouteWithChildren
   '/app/help': typeof AppHelpRoute
   '/app/profile': typeof AppProfileRoute
   '/app/send': typeof AppSendRoute
   '/app/templates': typeof AppTemplatesRoute
   '/app/': typeof AppIndexRoute
+  '/app/campaigns/$id': typeof AppCampaignsIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
-  '/app/campaigns': typeof AppCampaignsRoute
+  '/app/campaigns': typeof AppCampaignsRouteWithChildren
   '/app/help': typeof AppHelpRoute
   '/app/profile': typeof AppProfileRoute
   '/app/send': typeof AppSendRoute
   '/app/templates': typeof AppTemplatesRoute
   '/app': typeof AppIndexRoute
+  '/app/campaigns/$id': typeof AppCampaignsIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
-  '/app/campaigns': typeof AppCampaignsRoute
+  '/app/campaigns': typeof AppCampaignsRouteWithChildren
   '/app/help': typeof AppHelpRoute
   '/app/profile': typeof AppProfileRoute
   '/app/send': typeof AppSendRoute
   '/app/templates': typeof AppTemplatesRoute
   '/app/': typeof AppIndexRoute
+  '/app/campaigns/$id': typeof AppCampaignsIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -110,6 +119,7 @@ export interface FileRouteTypes {
     | '/app/send'
     | '/app/templates'
     | '/app/'
+    | '/app/campaigns/$id'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -120,6 +130,7 @@ export interface FileRouteTypes {
     | '/app/send'
     | '/app/templates'
     | '/app'
+    | '/app/campaigns/$id'
   id:
     | '__root__'
     | '/'
@@ -131,6 +142,7 @@ export interface FileRouteTypes {
     | '/app/send'
     | '/app/templates'
     | '/app/'
+    | '/app/campaigns/$id'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -204,11 +216,30 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppCampaignsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/app/campaigns/$id': {
+      id: '/app/campaigns/$id'
+      path: '/$id'
+      fullPath: '/app/campaigns/$id'
+      preLoaderRoute: typeof AppCampaignsIdRouteImport
+      parentRoute: typeof AppCampaignsRoute
+    }
   }
 }
 
+interface AppCampaignsRouteChildren {
+  AppCampaignsIdRoute: typeof AppCampaignsIdRoute
+}
+
+const AppCampaignsRouteChildren: AppCampaignsRouteChildren = {
+  AppCampaignsIdRoute: AppCampaignsIdRoute,
+}
+
+const AppCampaignsRouteWithChildren = AppCampaignsRoute._addFileChildren(
+  AppCampaignsRouteChildren,
+)
+
 interface AppRouteChildren {
-  AppCampaignsRoute: typeof AppCampaignsRoute
+  AppCampaignsRoute: typeof AppCampaignsRouteWithChildren
   AppHelpRoute: typeof AppHelpRoute
   AppProfileRoute: typeof AppProfileRoute
   AppSendRoute: typeof AppSendRoute
@@ -217,7 +248,7 @@ interface AppRouteChildren {
 }
 
 const AppRouteChildren: AppRouteChildren = {
-  AppCampaignsRoute: AppCampaignsRoute,
+  AppCampaignsRoute: AppCampaignsRouteWithChildren,
   AppHelpRoute: AppHelpRoute,
   AppProfileRoute: AppProfileRoute,
   AppSendRoute: AppSendRoute,
@@ -235,3 +266,13 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}
