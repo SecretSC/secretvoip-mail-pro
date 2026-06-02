@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireAuth, requireAdmin, hashPassword } from "../auth.js";
 import { pool, query } from "../db.js";
+import { config } from "../config.js";
 
 const router = Router();
 
