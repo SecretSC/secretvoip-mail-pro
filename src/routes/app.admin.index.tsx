@@ -201,6 +201,12 @@ function CustomersPage() {
           onClose={() => setPasswordFor(null)}
         />
       )}
+      {historyFor && (
+        <CustomerHistoryModal
+          customer={historyFor}
+          onClose={() => setHistoryFor(null)}
+        />
+      )}
     </div>
   );
 }
