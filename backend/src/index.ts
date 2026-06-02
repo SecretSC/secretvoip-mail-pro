@@ -8,6 +8,9 @@ import authRoutes from "./routes/auth.js";
 import meRoutes from "./routes/me.js";
 import emailRoutes from "./routes/email.js";
 import adminRoutes from "./routes/admin.js";
+import campaignRoutes from "./routes/campaigns.js";
+import templateRoutes from "./routes/templates.js";
+import settingsRoutes from "./routes/settings.js";
 
 const app = express();
 
@@ -50,6 +53,9 @@ app.use("/api/auth", authLimiter, authRoutes);
 app.use("/api", apiLimiter, meRoutes);
 app.use("/api/email", apiLimiter, emailRoutes);
 app.use("/api/admin", apiLimiter, adminRoutes);
+app.use("/api/campaigns", apiLimiter, campaignRoutes);
+app.use("/api/templates", apiLimiter, templateRoutes);
+app.use("/api/settings", apiLimiter, settingsRoutes);
 
 // 404
 app.use((_req, res) => {

@@ -155,4 +155,94 @@ router.get("/diagnostics", async (_req, res) => {
   });
 });
 
+// Error log
+router.get("/errors", async (req, res) => {
+  const limit = Math.min(parseInt(String(req.query.limit || "100")) || 100, 500);
+  const { rows } = await query(
+    `SELECT e.id, e.message, e.http_status AS "httpStatus",
+            e.request_summary AS "requestSummary",
+            e.response_summary AS "responseSummary",
+            e.resolved, e.notes, e.created_at AS "createdAt",
+            u.email AS "userEmail",
+            e.campaign_id AS "campaignId"
+       FROM error_logs e
+       LEFT JOIN users u ON u.id = e.user_id
+      ORDER BY e.created_at DESC
+      LIMIT $1`,
+    [limit],
+  );
+  res.json(rows);
+});
+
+router.post("/errors/:id/resolve", async (req, res) => {
+  await query(
+    `UPDATE error_logs SET resolved = true, notes = $2 WHERE id = $1`,
+    [req.params.id, req.body?.notes || null],
+  );
+  res.json({ ok: true });
+});
+
+// Wallet history for a customer
+router.get("/customers/:id/wallet", async (req, res) => {
+  const { rows } = await query(
+    `SELECT id, amount::float AS amount,
+            previous_balance::float AS "previousBalance",
+            new_balance::float AS "newBalance",
+            reason, created_at AS "createdAt"
+       FROM wallet_transactions
+      WHERE user_id = $1
+      ORDER BY created_at DESC
+      LIMIT 200`,
+    [req.params.id],
+  );
+  res.json(rows);
+});
+
+// Recent admin audit log
+router.get("/audit", async (_req, res) => {
+  const { rows } = await query(
+    `SELECT a.id, a.action, a.changes, a.created_at AS "createdAt",
+            admin_u.email AS "adminEmail",
+            target_u.email AS "targetEmail"
+       FROM audit_logs a
+       LEFT JOIN users admin_u ON admin_u.id = a.admin_id
+       LEFT JOIN users target_u ON target_u.id = a.target_user_id
+      ORDER BY a.created_at DESC
+      LIMIT 200`,
+  );
+  res.json(rows);
+});
+
+// Platform overview stats
+router.get("/overview", async (_req, res) => {
+  const { rows: users } = await query<{ total: number; suspended: number }>(
+    `SELECT COUNT(*)::int AS total,
+            SUM(CASE WHEN status='suspended' THEN 1 ELSE 0 END)::int AS suspended
+       FROM users WHERE role='customer'`,
+  );
+  const { rows: camp } = await query<{
+    total: number;
+    accepted: number;
+    failed: number;
+    revenue: number;
+    today: number;
+  }>(
+    `SELECT COUNT(*)::int AS total,
+            COALESCE(SUM(accepted),0)::int AS accepted,
+            COALESCE(SUM(failed),0)::int AS failed,
+            COALESCE(SUM(cost),0)::float AS revenue,
+            COALESCE(SUM(CASE WHEN created_at >= date_trunc('day', now())
+                              THEN accepted ELSE 0 END),0)::int AS today
+       FROM email_campaigns`,
+  );
+  const { rows: errs } = await query<{ open: number }>(
+    `SELECT COUNT(*)::int AS open FROM error_logs WHERE resolved = false`,
+  );
+  res.json({
+    customers: users[0],
+    campaigns: camp[0],
+    errors: errs[0],
+  });
+});
+
 export default router;
