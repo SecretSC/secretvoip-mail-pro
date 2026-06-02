@@ -133,6 +133,12 @@ function CustomersPage() {
                   </td>
                   <td className="px-5 py-3 text-right whitespace-nowrap">
                     <button
+                      onClick={() => setHistoryFor(c)}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-md text-foreground hover:bg-primary/10 hover:text-primary"
+                    >
+                      <History size={12} /> History
+                    </button>
+                    <button
                       onClick={() => setWalletFor(c)}
                       className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-md text-info hover:bg-info/10"
                     >
