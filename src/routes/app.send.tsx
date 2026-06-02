@@ -265,7 +265,7 @@ export function SendEmailPage() {
             <Row k="Recipients" v={parsed.valid.length.toLocaleString()} />
             <Row k="Invalid" v={parsed.invalid.length.toString()} muted />
             <Row k="Duplicates" v={parsed.duplicates.toString()} muted />
-            <Row k="Per email" v={`${PRICE_PER_EMAIL.toFixed(3)} €`} />
+            <Row k="Per email" v={`${pricePerEmail.toFixed(3)} €`} />
             <div className="h-px bg-border my-2" />
             <Row
               k="Estimated cost"
