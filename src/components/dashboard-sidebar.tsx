@@ -8,6 +8,7 @@ import {
   Settings,
   User,
   LogOut,
+  Shield,
 } from "lucide-react";
 import { BrandLogo } from "./brand-logo";
 import { useAuth } from "@/lib/auth-context";
@@ -20,6 +21,10 @@ const NAV = [
   { to: "/app/templates", label: "Templates", icon: FileText },
   { to: "/app/help", label: "Help & Guide", icon: HelpCircle },
   { to: "/app/profile", label: "Profile", icon: Settings },
+];
+
+const ADMIN_NAV = [
+  { to: "/app/admin", label: "Admin console", icon: Shield, exact: false },
 ];
 
 export function DashboardSidebar() {
@@ -66,6 +71,34 @@ export function DashboardSidebar() {
             </Link>
           );
         })}
+
+        {user?.role === "admin" && (
+          <>
+            <div className="px-3 pt-5 pb-2 text-[0.625rem] font-semibold tracking-[0.2em] text-muted-foreground uppercase">
+              Administration
+            </div>
+            {ADMIN_NAV.map((item) => {
+              const active = location.pathname.startsWith(item.to);
+              return (
+                <Link
+                  key={item.to}
+                  to={item.to}
+                  className={`group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors ${
+                    active
+                      ? "text-primary-foreground bg-primary/15 border border-primary/30"
+                      : "text-muted-foreground hover:text-foreground hover:bg-card/40"
+                  }`}
+                >
+                  <item.icon
+                    size={16}
+                    className={active ? "text-primary" : "text-muted-foreground group-hover:text-foreground"}
+                  />
+                  {item.label}
+                </Link>
+              );
+            })}
+          </>
+        )}
       </nav>
 
       <div className="m-3 rounded-xl glass p-3 flex items-center gap-3">
