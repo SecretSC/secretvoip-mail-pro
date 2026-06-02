@@ -93,18 +93,34 @@ will be proxied to `127.0.0.1:4000`.
 
 ## Endpoints
 
-| Method | Path                                | Auth   | Purpose                          |
-|--------|-------------------------------------|--------|----------------------------------|
-| POST   | `/api/auth/login`                   | none   | Email/password login → JWT       |
-| GET    | `/api/me`                           | user   | Current user profile             |
-| GET    | `/api/me/stats`                     | user   | Dashboard stats                  |
-| POST   | `/api/email/send`                   | user   | Send a campaign (proxy upstream) |
-| GET    | `/api/admin/customers`              | admin  | List customers                   |
-| POST   | `/api/admin/customers`              | admin  | Create customer                  |
-| POST   | `/api/admin/customers/:id/status`   | admin  | Suspend / unsuspend              |
-| POST   | `/api/admin/customers/:id/password` | admin  | Reset password                   |
-| POST   | `/api/admin/customers/:id/wallet`   | admin  | Top up / withdraw                |
-| GET    | `/api/admin/diagnostics`            | admin  | Health, latency, uptime          |
+| Method | Path                                | Auth   | Purpose                                       |
+|--------|-------------------------------------|--------|-----------------------------------------------|
+| POST   | `/api/auth/login`                   | none   | Email/password login → JWT                    |
+| GET    | `/api/me`                           | user   | Current user profile                          |
+| GET    | `/api/me/stats`                     | user   | Customer dashboard stats                      |
+| POST   | `/api/email/send`                   | user   | Send a campaign (proxy upstream)              |
+| GET    | `/api/campaigns`                    | user   | List own campaigns (admin: `?all=1` for all)  |
+| GET    | `/api/campaigns/:id`                | user   | Campaign detail + per-recipient results       |
+| GET    | `/api/campaigns/:id/export.csv`     | user   | Download recipient log as CSV                 |
+| GET    | `/api/templates`                    | user   | List saved templates                          |
+| POST   | `/api/templates`                    | user   | Create template                               |
+| PUT    | `/api/templates/:id`                | user   | Update template                               |
+| DELETE | `/api/templates/:id`                | user   | Delete template                               |
+| GET    | `/api/settings/public`              | none   | Site name + branding for the SPA shell        |
+| GET    | `/api/admin/overview`               | admin  | Platform stats (customers, revenue, errors)   |
+| GET    | `/api/admin/customers`              | admin  | List customers                                |
+| POST   | `/api/admin/customers`              | admin  | Create customer                               |
+| POST   | `/api/admin/customers/:id/status`   | admin  | Suspend / unsuspend                           |
+| POST   | `/api/admin/customers/:id/password` | admin  | Reset password                                |
+| POST   | `/api/admin/customers/:id/wallet`   | admin  | Top up / withdraw                             |
+| GET    | `/api/admin/customers/:id/wallet`   | admin  | Wallet transaction history                    |
+| GET    | `/api/admin/errors`                 | admin  | Error log                                     |
+| POST   | `/api/admin/errors/:id/resolve`     | admin  | Mark error resolved                           |
+| GET    | `/api/admin/audit`                  | admin  | Recent admin actions                          |
+| GET    | `/api/admin/diagnostics`            | admin  | Health, latency, uptime                       |
+| GET    | `/api/settings`                     | admin  | Get all platform settings                     |
+| PUT    | `/api/settings/:key`                | admin  | Update a platform setting                     |
+
 
 ## Security notes
 
