@@ -152,6 +152,32 @@ export function SendEmailPage() {
         </header>
 
         <form onSubmit={onSend} className="mt-8 space-y-6">
+          <div className="glass rounded-2xl p-4 flex flex-wrap items-center gap-3">
+            <FileText size={16} className="text-info" />
+            <span className="text-xs text-muted-foreground">Load template:</span>
+            <select
+              className="input max-w-xs"
+              defaultValue=""
+              onChange={(e) => {
+                if (e.target.value) loadTemplate(e.target.value);
+                e.target.value = "";
+              }}
+            >
+              <option value="">— Choose a saved template —</option>
+              {templates.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={saveAsTemplate}
+              className="ml-auto inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md glass hover:bg-card/60"
+            >
+              <Save size={12} /> Save current as template
+            </button>
+          </div>
           <div className="glass rounded-2xl p-6 space-y-5">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
               <Field label="From name *">
