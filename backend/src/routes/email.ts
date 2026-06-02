@@ -41,18 +41,27 @@ router.post("/send", requireAuth, async (req, res) => {
     return res.status(400).json({ error: "No valid recipients" });
   }
 
-  // Pre-flight balance check: require >= 1 email worth of credit
-  if (user.balance < config.pricePerEmail) {
+  // Resolve effective pricing from settings (fallback to env defaults)
+  const { rows: settingRows } = await query<{ key: string; value: any }>(
+    `SELECT key, value FROM settings WHERE key IN ('price_per_email','provider_cost_per_email')`,
+  );
+  const settingsMap = Object.fromEntries(settingRows.map((r) => [r.key, r.value]));
+  const pricePerEmail = Number(settingsMap.price_per_email ?? config.pricePerEmail) || 0;
+  const providerCostPerEmail = Number(settingsMap.provider_cost_per_email ?? 0.001) || 0;
+
+  // Pre-flight balance check
+  if (user.balance < pricePerEmail) {
     return res.status(402).json({ error: "Insufficient wallet balance" });
   }
 
-  // Create campaign row up front so we have an ID for logging
+  // Create campaign row up front with historical price snapshot
   const { rows: campRows } = await query<{ id: string }>(
     `INSERT INTO email_campaigns
-        (user_id, from_name, subject, html, total, accepted, failed, cost, status)
-     VALUES ($1, $2, $3, $4, $5, 0, 0, 0, 'sending')
+        (user_id, from_name, subject, html, total, accepted, failed, cost, status,
+         price_per_email, provider_cost_per_email)
+     VALUES ($1, $2, $3, $4, $5, 0, 0, 0, 'sending', $6, $7)
      RETURNING id`,
-    [user.id, fromName, subject, html, cleanRecipients.length],
+    [user.id, fromName, subject, html, cleanRecipients.length, pricePerEmail, providerCostPerEmail],
   );
   const campaignId = campRows[0].id;
 
