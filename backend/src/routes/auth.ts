@@ -15,7 +15,12 @@ router.post("/login", async (req, res) => {
   if (!parsed.success) {
     return res.status(400).json({ error: "Invalid request" });
   }
-  const { email, password } = parsed.data;
+  // Trim both — admins may paste with whitespace; users sometimes type a trailing space.
+  const email = parsed.data.email.trim();
+  const password = parsed.data.password; // do NOT trim password chars users typed intentionally
+  if (!email || !password) {
+    return res.status(400).json({ error: "Email and password required" });
+  }
 
   const { rows } = await query<{
     id: string;
@@ -30,15 +35,26 @@ router.post("/login", async (req, res) => {
             balance::float AS balance, password_hash AS "passwordHash"
        FROM users
       WHERE lower(email) = lower($1) LIMIT 1`,
-    [email.trim()],
+    [email],
   );
   const user = rows[0];
-  if (!user) return res.status(401).json({ error: "Invalid credentials" });
+  if (!user) {
+    console.warn(`[auth] login failed: no user for "${email}" from ${req.ip}`);
+    return res.status(401).json({ error: "Invalid credentials" });
+  }
 
   const ok = await verifyPassword(password, user.passwordHash);
-  if (!ok) return res.status(401).json({ error: "Invalid credentials" });
+  if (!ok) {
+    console.warn(
+      `[auth] login failed: bad password for ${user.email} (id=${user.id}) from ${req.ip}`,
+    );
+    return res.status(401).json({ error: "Invalid credentials" });
+  }
   if (user.status === "suspended") {
-    return res.status(403).json({ error: "Account suspended" });
+    console.warn(`[auth] login blocked: suspended account ${user.email}`);
+    return res.status(403).json({
+      error: "Account suspended — contact your administrator.",
+    });
   }
 
   await query(
@@ -49,6 +65,7 @@ router.post("/login", async (req, res) => {
 
   const token = signToken(user.id);
   const { passwordHash: _ph, ...safe } = user;
+  console.log(`[auth] login ok: ${user.email} (${user.role})`);
   res.json({ token, user: safe });
 });
 
