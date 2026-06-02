@@ -11,6 +11,7 @@ import {
   X,
   History,
 } from "lucide-react";
+import { CustomerHistoryModal } from "@/components/customer-history-modal";
 
 export const Route = createFileRoute("/app/admin/")({
   component: CustomersPage,
@@ -24,6 +25,7 @@ function CustomersPage() {
   const [creating, setCreating] = useState(false);
   const [walletFor, setWalletFor] = useState<Customer | null>(null);
   const [passwordFor, setPasswordFor] = useState<Customer | null>(null);
+  const [historyFor, setHistoryFor] = useState<Customer | null>(null);
 
   async function load() {
     try {
