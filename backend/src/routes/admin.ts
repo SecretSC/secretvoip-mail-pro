@@ -152,7 +152,7 @@ router.post("/customers/:id/wallet", async (req, res) => {
   }
 });
 
-// Diagnostics
+// Diagnostics — DB, uptime, provider config status
 router.get("/diagnostics", async (_req, res) => {
   const t0 = Date.now();
   let dbOk = false;
@@ -165,7 +165,60 @@ router.get("/diagnostics", async (_req, res) => {
     uptimeSec: Math.round(process.uptime()),
     timestamp: new Date().toISOString(),
     latencyMs: Date.now() - t0,
+    provider: {
+      configured: Boolean(config.mailProviderApiKey && config.mailProviderBaseUrl),
+      // We intentionally do NOT expose the full URL or any part of the key.
+      baseHost: safeHost(config.mailProviderBaseUrl),
+    },
   });
+});
+
+function safeHost(u: string): string {
+  try {
+    return new URL(u).host;
+  } catch {
+    return "—";
+  }
+}
+
+// Live provider connection test — admin-only
+router.post("/provider/test", async (_req, res) => {
+  const t0 = Date.now();
+  try {
+    const resp = await fetch(`${config.mailProviderBaseUrl}/api/public/send`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${config.mailProviderApiKey}`,
+      },
+      // Empty recipient list — provider should reply with a validation error
+      // quickly, which is enough to prove auth + connectivity.
+      body: JSON.stringify({
+        fromName: "SecretVoIP Mail Diagnostics",
+        subject: "ping",
+        html: "<p>ping</p>",
+        recipients: [],
+      }),
+    });
+    const latency = Date.now() - t0;
+    const text = await resp.text();
+    res.json({
+      ok: resp.status < 500,
+      status: resp.status,
+      latencyMs: latency,
+      reachable: true,
+      // 401 means key invalid; 400 means reached and authed but rejected payload — both prove reachability.
+      authOk: resp.status !== 401 && resp.status !== 403,
+      responsePreview: text.slice(0, 500),
+    });
+  } catch (err: any) {
+    res.json({
+      ok: false,
+      reachable: false,
+      latencyMs: Date.now() - t0,
+      error: String(err?.message || err),
+    });
+  }
 });
 
 // Error log
