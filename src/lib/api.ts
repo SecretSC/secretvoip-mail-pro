@@ -4,8 +4,10 @@
  * Never calls the upstream mail provider directly.
  */
 
+// In production Apache proxies /mail/api/ -> http://127.0.0.1:4000/api/
+// In local dev set VITE_API_URL=http://localhost:4000 (no /mail prefix).
 const API_URL =
-  (import.meta as any).env?.VITE_API_URL || "http://localhost:4000";
+  (import.meta as any).env?.VITE_API_URL ?? "/mail";
 
 const TOKEN_KEY = "svm_token";
 
