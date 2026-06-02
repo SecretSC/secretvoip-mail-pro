@@ -81,19 +81,23 @@ router.post("/customers/:id/status", async (req, res) => {
 
 // Reset password
 router.post("/customers/:id/password", async (req, res) => {
-  const password = String(req.body?.password || "");
+  const raw = String(req.body?.password ?? "");
+  // Trim leading/trailing whitespace defensively — these almost always come from paste.
+  const password = raw.replace(/^\s+|\s+$/g, "");
   if (password.length < 8)
-    return res.status(400).json({ error: "Password too short" });
+    return res.status(400).json({ error: "Password must be at least 8 characters" });
   const hash = await hashPassword(password);
-  await query(`UPDATE users SET password_hash=$2 WHERE id=$1`, [
-    req.params.id,
-    hash,
-  ]);
+  const { rowCount } = await query(
+    `UPDATE users SET password_hash=$2 WHERE id=$1 AND role IN ('customer','admin')`,
+    [req.params.id, hash],
+  );
+  if (rowCount === 0) return res.status(404).json({ error: "User not found" });
   await query(
     `INSERT INTO audit_logs (admin_id, action, target_user_id, changes)
      VALUES ($1, 'reset_password', $2, $3)`,
     [req.user!.id, req.params.id, JSON.stringify({})],
   );
+  console.log(`[admin] reset password for user id=${req.params.id}`);
   res.json({ ok: true });
 });
 
