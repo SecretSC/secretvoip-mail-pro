@@ -31,7 +31,14 @@ const CreateCustomer = z.object({
 router.post("/customers", async (req, res) => {
   const parsed = CreateCustomer.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid input" });
-  const { email, fullName, password, balance, notes } = parsed.data;
+  // Trim defensively — autocomplete / paste often inserts whitespace.
+  const email = parsed.data.email.trim().toLowerCase();
+  const fullName = parsed.data.fullName.trim();
+  const password = parsed.data.password; // do NOT mutate; preserves exact chars admin showed customer
+  const { balance, notes } = parsed.data;
+  if (password.trim().length < 8) {
+    return res.status(400).json({ error: "Password must be at least 8 visible characters" });
+  }
   const passwordHash = await hashPassword(password);
   try {
     const { rows } = await query<{ id: string }>(
@@ -45,6 +52,7 @@ router.post("/customers", async (req, res) => {
        VALUES ($1, 'create_customer', $2, $3)`,
       [req.user!.id, rows[0].id, JSON.stringify({ email, fullName, balance })],
     );
+    console.log(`[admin] created customer ${email} (id=${rows[0].id})`);
     res.json({ id: rows[0].id });
   } catch (err: any) {
     if (err?.code === "23505")
