@@ -137,7 +137,18 @@ router.post("/send", requireAuth, async (req, res) => {
 
   const accepted = results.filter((r) => r.ok).length;
   const failed = results.length - accepted;
-  const cost = +(accepted * config.pricePerEmail).toFixed(6);
+  const cost = +(accepted * pricePerEmail).toFixed(6);
+  const providerCost = +(accepted * providerCostPerEmail).toFixed(6);
+  const profit = +(cost - providerCost).toFixed(6);
+
+  // Sanitised provider response — no API key / URL inside.
+  const providerResponseSnapshot = {
+    sent: upstream.sent ?? null,
+    failed: upstream.failed ?? null,
+    total: upstream.total ?? null,
+    hasResults: Array.isArray(upstream.results),
+    httpStatus: upstreamStatus,
+  };
 
   // Persist recipient results + charge wallet in a transaction
   const client = await pool.connect();
@@ -162,12 +173,13 @@ router.post("/send", requireAuth, async (req, res) => {
       );
     }
 
-    // Update campaign
+    // Update campaign incl. profit snapshot
     await client.query(
       `UPDATE email_campaigns
-         SET accepted=$2, failed=$3, cost=$4, status='completed'
+         SET accepted=$2, failed=$3, cost=$4, status='completed',
+             provider_cost=$5, profit=$6, provider_response=$7
        WHERE id=$1`,
-      [campaignId, accepted, failed, cost],
+      [campaignId, accepted, failed, cost, providerCost, profit, JSON.stringify(providerResponseSnapshot)],
     );
 
     // Charge wallet (lock row)
