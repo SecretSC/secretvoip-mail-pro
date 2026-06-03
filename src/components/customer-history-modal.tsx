@@ -11,7 +11,7 @@ interface Props {
   onClose: () => void;
 }
 
-type Tab = "campaigns" | "wallet" | "activity";
+type Tab = "campaigns" | "wallet" | "activity" | "transmission";
 
 export function CustomerHistoryModal({ customer, onClose }: Props) {
   const [tab, setTab] = useState<Tab>("campaigns");
