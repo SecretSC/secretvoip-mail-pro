@@ -294,7 +294,9 @@ router.post("/:id/cancel", async (req, res) => {
     if (!resp.ok) return res.status(502).json({ error: body?.error || `Provider responded ${resp.status}` });
 
     await query(
-      `UPDATE email_campaigns SET status='cancelled', last_synced_at=now() WHERE id=$1`,
+      `UPDATE email_campaigns
+          SET status='cancelled', finalized=true, last_synced_at=now()
+        WHERE id=$1`,
       [req.params.id],
     );
     await query(
