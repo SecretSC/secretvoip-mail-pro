@@ -138,39 +138,59 @@ router.post("/:id/sync", async (req, res) => {
   if (camp[0].finalized) return res.json({ ok: true, finalized: true });
   if (!camp[0].providerJobId) return res.json({ ok: false, message: "No provider job id" });
 
-  // Poll provider
-  let job: any = null;
+  // Poll provider — GET /api/public/job/:jobId
+  // Response shape (per provider docs):
+  //   { job: { status: "pending|processing|done|cancelled",
+  //            total, sent, failed, cancelled, pending,
+  //            progressPct, ratePerSec, etaSeconds, elapsedSec,
+  //            bounceCounts: { bounced, complained } },
+  //     items:   [ { email, status, sent_at } ],
+  //     bounces: [ { email, event_type, reason } ] }
+  let payload: any = null;
   let httpStatus = 0;
   try {
-    const resp = await fetch(
-      `${config.mailProviderBaseUrl}/api/public/job/${encodeURIComponent(camp[0].providerJobId)}`,
-      { headers: { Authorization: `Bearer ${config.mailProviderApiKey}` } },
-    );
+    const url = `${config.mailProviderBaseUrl}/api/public/job/${encodeURIComponent(camp[0].providerJobId)}`;
+    const resp = await fetch(url, {
+      headers: { Authorization: `Bearer ${config.mailProviderApiKey}` },
+    });
     httpStatus = resp.status;
     const txt = await resp.text();
-    job = txt ? JSON.parse(txt) : {};
+    payload = txt ? JSON.parse(txt) : {};
+    console.log(`[sync] campaign=${req.params.id} job=${camp[0].providerJobId} http=${httpStatus} status=${payload?.job?.status} sent=${payload?.job?.sent} failed=${payload?.job?.failed} pending=${payload?.job?.pending}`);
     if (!resp.ok) throw new Error(`Provider responded ${resp.status}`);
   } catch (err: any) {
+    console.error(`[sync] campaign=${req.params.id} fetch failed:`, err?.message || err);
     return res.status(502).json({ error: String(err?.message || err) });
   }
 
-  // Normalize counters from the provider response.
-  const sent = Number(job.sent ?? job.delivered ?? 0) || 0;
-  const failed = Number(job.failed ?? 0) || 0;
-  const bounced = Number(job.bounced ?? 0) || 0;
-  const invalid = Number(job.invalid ?? 0) || 0;
-  const delayed = Number(job.delayed ?? 0) || 0;
-  const queued = Number(job.queued ?? Math.max(0, (camp[0].total ?? 0) - sent - failed - bounced - invalid - delayed)) || 0;
-  const processing = Number(job.processing ?? job.sending ?? 0) || 0;
+  const job = payload?.job ?? payload ?? {};
+  const items: any[] = Array.isArray(payload?.items)
+    ? payload.items
+    : Array.isArray(payload?.recipients) ? payload.recipients
+    : Array.isArray(payload?.results)    ? payload.results
+    : [];
+  const bounceEvents: any[] = Array.isArray(payload?.bounces) ? payload.bounces : [];
+
+  const total       = Number(job.total ?? camp[0].total ?? 0) || 0;
+  const sent        = Number(job.sent ?? job.delivered ?? 0) || 0;
+  const failedRaw   = Number(job.failed ?? 0) || 0;
+  const cancelled   = Number(job.cancelled ?? 0) || 0;
+  const pending     = Number(job.pending ?? Math.max(0, total - sent - failedRaw - cancelled)) || 0;
+  const bounceCounts = job.bounceCounts ?? job.bounce_counts ?? null;
+  const bounced     = Number(bounceCounts?.bounced ?? job.bounced ?? 0) || 0;
+  const complained  = Number(bounceCounts?.complained ?? 0) || 0;
+  const invalid     = Number(job.invalid ?? 0) || 0;
+  const delayed     = Number(job.delayed ?? 0) || 0;
+
   const providerStatus = String(job.status || "").toLowerCase();
+  const terminal = ["done", "completed", "finished", "complete", "cancelled", "canceled"]
+    .includes(providerStatus);
 
-  const recipientResults: any[] = Array.isArray(job.recipients) ? job.recipients
-                                : Array.isArray(job.results)    ? job.results
-                                : [];
-
-  // Patch per-recipient rows if provider returned recipient-level events
-  for (const r of recipientResults) {
-    const status = String(r.status || r.event || (r.ok ? "delivered" : "failed")).toLowerCase();
+  // Patch per-recipient rows from items[]
+  for (const r of items) {
+    const email = r.email;
+    if (!email) continue;
+    const st = String(r.status || r.event || (r.ok ? "delivered" : "failed")).toLowerCase();
     await query(
       `UPDATE email_results
           SET status=$3,
@@ -180,42 +200,82 @@ router.post("/:id/sync", async (req, res) => {
               event_type=COALESCE($6, event_type),
               last_event_at=now()
         WHERE campaign_id=$1 AND email=$2`,
-      [req.params.id, r.email, status, r.error || r.reason || null,
-       r.id || r.recipientId || null, r.event || null],
+      [req.params.id, email, st, r.error || r.reason || null,
+       r.id || r.recipientId || null, r.event || r.event_type || null],
+    );
+  }
+  // Apply bounce events from bounces[]
+  for (const b of bounceEvents) {
+    if (!b?.email) continue;
+    await query(
+      `UPDATE email_results
+          SET status='bounced', accepted=false,
+              error=$3, event_type=$4, last_event_at=now()
+        WHERE campaign_id=$1 AND email=$2`,
+      [req.params.id, b.email, b.reason || null, b.event_type || "bounced"],
     );
   }
 
-  const terminal = ["completed", "done", "finished", "complete"].includes(providerStatus)
-                || (queued === 0 && processing === 0
-                    && (sent + failed + bounced + invalid + delayed) >= (camp[0].total || 0));
+  // Mapped local status from provider status.
+  let mappedStatus: string;
+  if (terminal) {
+    mappedStatus = providerStatus === "cancelled" || providerStatus === "canceled"
+      ? "cancelled" : "completed";
+  } else if (providerStatus === "processing" || providerStatus === "sending") {
+    mappedStatus = "processing";
+  } else if (providerStatus === "pending" || providerStatus === "queued") {
+    mappedStatus = sent + failedRaw > 0 ? "processing" : "queued";
+  } else {
+    mappedStatus = sent + failedRaw > 0 ? "processing" : "queued";
+  }
+
+  // Always update progress counters first (so the card stays in sync).
+  await query(
+    `UPDATE email_campaigns
+        SET status=$2,
+            queued_count=$3, processing_count=$4,
+            delivered_count=$5, bounced_count=$6, invalid_count=$7, delayed_count=$8,
+            accepted=$5, failed=$9,
+            last_synced_at=now(),
+            provider_response=$10
+      WHERE id=$1 AND finalized=false`,
+    [req.params.id, mappedStatus, pending, 0,
+     sent, bounced, invalid, delayed,
+     (failedRaw + bounced + invalid + complained),
+     JSON.stringify({ jobId: camp[0].providerJobId, providerStatus, sent, failed: failedRaw, bounced, complained, pending, total, httpStatus })],
+  );
 
   if (terminal) {
-    // Build a finalized result set from email_results (authoritative)
-    const { rows: rResults } = await query<{ email: string; status: string; error: string | null }>(
-      `SELECT email, status, error FROM email_results WHERE campaign_id=$1`,
-      [req.params.id],
-    );
-    // If provider didn't send per-recipient breakdown, infer from counts
-    if (recipientResults.length === 0) {
-      // Mark first `sent` as delivered, rest failed/bounced/etc proportionally
+    console.log(`[sync] campaign=${req.params.id} TERMINAL providerStatus=${providerStatus} sent=${sent} failed=${failedRaw} bounced=${bounced}`);
+    // If provider didn't return per-recipient items, infer terminal state for any remaining queued/processing rows
+    if (items.length === 0) {
+      const { rows: rResults } = await query<{ email: string; status: string }>(
+        `SELECT email, status FROM email_results WHERE campaign_id=$1 AND status IN ('queued','processing','sending')`,
+        [req.params.id],
+      );
       let i = 0;
-      const allRows = rResults.slice();
       const assign = async (n: number, st: string) => {
-        for (let k = 0; k < n && i < allRows.length; k++, i++) {
-          if (allRows[i].status === "queued" || allRows[i].status === "processing") {
-            await query(
-              `UPDATE email_results SET status=$2, accepted=$3, last_event_at=now()
-                WHERE campaign_id=$1 AND email=$4`,
-              [req.params.id, st, st === "delivered", allRows[i].email],
-            );
-          }
+        for (let k = 0; k < n && i < rResults.length; k++, i++) {
+          await query(
+            `UPDATE email_results SET status=$2, accepted=$3, last_event_at=now()
+              WHERE campaign_id=$1 AND email=$4`,
+            [req.params.id, st, st === "delivered", rResults[i].email],
+          );
         }
       };
       await assign(sent, "delivered");
-      await assign(failed, "failed");
+      await assign(failedRaw, "failed");
       await assign(bounced, "bounced");
-      await assign(invalid, "invalid");
-      await assign(delayed, "delayed");
+      // Anything still queued at this point => cancelled if provider was cancelled, else failed
+      const leftover = mappedStatus === "cancelled" ? "cancelled" : "failed";
+      while (i < rResults.length) {
+        await query(
+          `UPDATE email_results SET status=$2, accepted=false, last_event_at=now()
+            WHERE campaign_id=$1 AND email=$3`,
+          [req.params.id, leftover, rResults[i].email],
+        );
+        i++;
+      }
     }
     const { rows: finalRows } = await query<{ email: string; status: string; error: string | null; accepted: boolean }>(
       `SELECT email, status, error, accepted FROM email_results WHERE campaign_id=$1`,
@@ -225,43 +285,28 @@ router.post("/:id/sync", async (req, res) => {
       req.params.id,
       camp[0].userId,
       finalRows.map((r) => ({ email: r.email, ok: r.accepted, error: r.error, status: r.status })),
-      { jobId: camp[0].providerJobId, providerStatus, sent, failed, bounced, invalid, delayed, httpStatus },
+      { jobId: camp[0].providerJobId, providerStatus, sent, failed: failedRaw, bounced, invalid, delayed, httpStatus },
     );
-    return res.json({ ok: true, finalized: true, status: "completed" });
+    return res.json({ ok: true, finalized: true, status: mappedStatus });
   }
-
-  // Still in flight — just update counts
-  const mappedStatus = ["processing", "sending"].includes(providerStatus) ? providerStatus
-                     : (queued > 0 && (sent + failed) === 0 ? "queued" : "processing");
-
-  await query(
-    `UPDATE email_campaigns
-        SET status=$2,
-            queued_count=$3, processing_count=$4,
-            delivered_count=$5, bounced_count=$6, invalid_count=$7, delayed_count=$8,
-            accepted=$5, failed=$9,
-            last_synced_at=now(),
-            provider_response=$10
-      WHERE id=$1`,
-    [req.params.id, mappedStatus, queued, processing,
-     sent, bounced, invalid, delayed,
-     (failed + bounced + invalid),
-     JSON.stringify({ jobId: camp[0].providerJobId, providerStatus, sent, failed, bounced, invalid, delayed, queued, processing, httpStatus })],
-  );
 
   res.json({
     ok: true, finalized: false, status: mappedStatus,
-    counts: { queued, processing, delivered: sent, failed, bounced, invalid, delayed },
+    counts: { queued: pending, processing: 0, delivered: sent, failed: failedRaw, bounced, invalid, delayed },
     live: {
       status: providerStatus || mappedStatus,
-      total: Number(job.total ?? camp[0].total ?? 0),
-      sent, failed,
-      pending: Number(job.pending ?? (queued + processing)),
-      progressPct: Number(job.progressPct ?? job.progress_pct ?? 0),
+      total,
+      sent,
+      failed: failedRaw,
+      pending,
+      progressPct: Number(
+        job.progressPct ?? job.progress_pct ??
+        (total > 0 ? Math.round(((sent + failedRaw + bounced) / total) * 100) : 0)
+      ),
       ratePerSec: Number(job.ratePerSec ?? job.rate_per_sec ?? 0),
       etaSeconds: Number(job.etaSeconds ?? job.eta_seconds ?? 0),
       elapsedSec: Number(job.elapsedSec ?? job.elapsed_sec ?? 0),
-      bounceCounts: job.bounceCounts ?? job.bounce_counts ?? null,
+      bounceCounts,
     },
   });
 });
