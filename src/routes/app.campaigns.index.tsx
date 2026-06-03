@@ -112,16 +112,18 @@ function CampaignsPage() {
 }
 
 function StatusPill({ status }: { status: Campaign["status"] }) {
-  const cls =
-    status === "completed"
-      ? "bg-success/15 text-success border-success/30"
-      : status === "failed"
-        ? "bg-destructive/15 text-destructive border-destructive/30"
-        : "bg-info/15 text-info border-info/30";
+function StatusPill({ status }: { status: Campaign["status"] }) {
+  const map: Record<string, string> = {
+    completed: "bg-success/15 text-success border-success/40",
+    partial:   "bg-warning/15 text-warning border-warning/40",
+    failed:    "bg-destructive/15 text-destructive border-destructive/40",
+    cancelled: "bg-muted/15 text-muted-foreground border-border",
+    queued:    "bg-info/15 text-info border-info/40",
+    processing:"bg-info/15 text-info border-info/40",
+    sending:   "bg-info/15 text-info border-info/40",
+  };
   return (
-    <span
-      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[0.65rem] font-semibold uppercase tracking-wider border ${cls}`}
-    >
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[0.65rem] font-semibold uppercase tracking-wider border ${map[status] || ""}`}>
       {status === "failed" && <AlertCircle size={10} />} {status}
     </span>
   );
