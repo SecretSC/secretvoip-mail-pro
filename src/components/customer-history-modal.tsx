@@ -99,6 +99,7 @@ export function CustomerHistoryModal({ customer, onClose }: Props) {
               { k: "campaigns", l: "Campaigns", i: Mail },
               { k: "wallet", l: "Wallet", i: Wallet },
               { k: "activity", l: "Activity", i: Activity },
+              { k: "transmission", l: "Transmission Log", i: Activity },
             ] as { k: Tab; l: string; i: any }[]
           ).map(({ k, l, i: Icon }) => (
             <button
