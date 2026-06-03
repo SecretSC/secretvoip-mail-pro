@@ -495,4 +495,80 @@ router.post("/templates/:id/unassign", async (req, res) => {
   res.json({ ok: true });
 });
 
+// ============================================================
+// CUSTOMER-OWNED TEMPLATES (admin moderation)
+// ============================================================
+router.get("/customer-templates", async (req, res) => {
+  const userId = req.query.userId ? String(req.query.userId) : null;
+  const params: any[] = [];
+  let where = `WHERE t.scope = 'user'`;
+  if (userId) { params.push(userId); where += ` AND t.user_id = $${params.length}`; }
+  const { rows } = await query(
+    `SELECT t.id, t.name, t.subject, t.html,
+            t.created_at AS "createdAt", t.updated_at AS "updatedAt",
+            t.user_id AS "userId",
+            COALESCE(u.username, u.email) AS "userEmail",
+            u.full_name AS "userName"
+       FROM saved_templates t
+       LEFT JOIN users u ON u.id = t.user_id
+       ${where}
+       ORDER BY t.updated_at DESC LIMIT 500`,
+    params,
+  );
+  res.json(rows);
+});
+
+const EditCustomerTpl = z.object({
+  name: z.string().trim().min(1).max(120),
+  subject: z.string().trim().min(1).max(500),
+  html: z.string().trim().min(1).max(200_000),
+});
+router.put("/customer-templates/:id", async (req, res) => {
+  const p = EditCustomerTpl.safeParse(req.body);
+  if (!p.success) return res.status(400).json({ error: "Invalid input" });
+  const { rowCount } = await query(
+    `UPDATE saved_templates SET name=$2, subject=$3, html=$4, updated_at=now()
+      WHERE id=$1 AND scope='user'`,
+    [req.params.id, p.data.name, p.data.subject, p.data.html],
+  );
+  if (rowCount === 0) return res.status(404).json({ error: "Not found" });
+  await query(
+    `INSERT INTO audit_logs (admin_id, action, target_user_id, changes)
+     VALUES ($1, 'edit_customer_template', NULL, $2)`,
+    [req.user!.id, JSON.stringify({ templateId: req.params.id, name: p.data.name })],
+  );
+  res.json({ ok: true });
+});
+router.delete("/customer-templates/:id", async (req, res) => {
+  const { rowCount } = await query(
+    `DELETE FROM saved_templates WHERE id=$1 AND scope='user'`,
+    [req.params.id],
+  );
+  if (rowCount === 0) return res.status(404).json({ error: "Not found" });
+  await query(
+    `INSERT INTO audit_logs (admin_id, action, target_user_id, changes)
+     VALUES ($1, 'delete_customer_template', NULL, $2)`,
+    [req.user!.id, JSON.stringify({ templateId: req.params.id })],
+  );
+  res.json({ ok: true });
+});
+
+// ============================================================
+// Customer transmission log (admin)
+// ============================================================
+router.get("/customers/:id/transmission", async (req, res) => {
+  const { rows } = await query(
+    `SELECT r.email, r.status, r.error AS reason, r.event_type AS "eventType",
+            r.last_event_at AS "lastEventAt", r.created_at AS "createdAt",
+            c.id AS "campaignId", c.subject, c.from_name AS "fromName"
+       FROM email_results r
+       JOIN email_campaigns c ON c.id = r.campaign_id
+      WHERE c.user_id = $1
+      ORDER BY COALESCE(r.last_event_at, r.created_at) DESC
+      LIMIT 1000`,
+    [req.params.id],
+  );
+  res.json(rows);
+});
+
 export default router;
