@@ -1,7 +1,7 @@
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import {
   LayoutGrid, Send, Mail, FileText, HelpCircle, Settings, User,
-  LogOut, Shield, Menu, X,
+  LogOut, Shield, Menu, X, Activity,
 } from "lucide-react";
 import { useState } from "react";
 import { BrandLogo } from "./brand-logo";
@@ -12,6 +12,7 @@ const NAV = [
   { to: "/app", label: "Overview", icon: LayoutGrid, exact: true },
   { to: "/app/send", label: "Send Email", icon: Send },
   { to: "/app/campaigns", label: "Campaigns", icon: Mail },
+  { to: "/app/transmission", label: "Transmission Log", icon: Activity },
   { to: "/app/templates", label: "Templates", icon: FileText },
   { to: "/app/help", label: "Help & Guide", icon: HelpCircle },
   { to: "/app/profile", label: "Profile", icon: Settings },

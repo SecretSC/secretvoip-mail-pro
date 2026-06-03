@@ -13,6 +13,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as AppRouteImport } from './routes/app'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppIndexRouteImport } from './routes/app.index'
+import { Route as AppTransmissionRouteImport } from './routes/app.transmission'
 import { Route as AppTemplatesRouteImport } from './routes/app.templates'
 import { Route as AppSendRouteImport } from './routes/app.send'
 import { Route as AppProfileRouteImport } from './routes/app.profile'
@@ -45,6 +46,11 @@ const IndexRoute = IndexRouteImport.update({
 const AppIndexRoute = AppIndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppTransmissionRoute = AppTransmissionRouteImport.update({
+  id: '/transmission',
+  path: '/transmission',
   getParentRoute: () => AppRoute,
 } as any)
 const AppTemplatesRoute = AppTemplatesRouteImport.update({
@@ -122,6 +128,7 @@ export interface FileRoutesByFullPath {
   '/app/profile': typeof AppProfileRoute
   '/app/send': typeof AppSendRoute
   '/app/templates': typeof AppTemplatesRoute
+  '/app/transmission': typeof AppTransmissionRoute
   '/app/': typeof AppIndexRoute
   '/app/admin/audit': typeof AppAdminAuditRoute
   '/app/admin/diagnostics': typeof AppAdminDiagnosticsRoute
@@ -139,6 +146,7 @@ export interface FileRoutesByTo {
   '/app/profile': typeof AppProfileRoute
   '/app/send': typeof AppSendRoute
   '/app/templates': typeof AppTemplatesRoute
+  '/app/transmission': typeof AppTransmissionRoute
   '/app': typeof AppIndexRoute
   '/app/admin/audit': typeof AppAdminAuditRoute
   '/app/admin/diagnostics': typeof AppAdminDiagnosticsRoute
@@ -159,6 +167,7 @@ export interface FileRoutesById {
   '/app/profile': typeof AppProfileRoute
   '/app/send': typeof AppSendRoute
   '/app/templates': typeof AppTemplatesRoute
+  '/app/transmission': typeof AppTransmissionRoute
   '/app/': typeof AppIndexRoute
   '/app/admin/audit': typeof AppAdminAuditRoute
   '/app/admin/diagnostics': typeof AppAdminDiagnosticsRoute
@@ -180,6 +189,7 @@ export interface FileRouteTypes {
     | '/app/profile'
     | '/app/send'
     | '/app/templates'
+    | '/app/transmission'
     | '/app/'
     | '/app/admin/audit'
     | '/app/admin/diagnostics'
@@ -197,6 +207,7 @@ export interface FileRouteTypes {
     | '/app/profile'
     | '/app/send'
     | '/app/templates'
+    | '/app/transmission'
     | '/app'
     | '/app/admin/audit'
     | '/app/admin/diagnostics'
@@ -216,6 +227,7 @@ export interface FileRouteTypes {
     | '/app/profile'
     | '/app/send'
     | '/app/templates'
+    | '/app/transmission'
     | '/app/'
     | '/app/admin/audit'
     | '/app/admin/diagnostics'
@@ -261,6 +273,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/app/'
       preLoaderRoute: typeof AppIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/transmission': {
+      id: '/app/transmission'
+      path: '/transmission'
+      fullPath: '/app/transmission'
+      preLoaderRoute: typeof AppTransmissionRouteImport
       parentRoute: typeof AppRoute
     }
     '/app/templates': {
@@ -385,6 +404,7 @@ interface AppRouteChildren {
   AppProfileRoute: typeof AppProfileRoute
   AppSendRoute: typeof AppSendRoute
   AppTemplatesRoute: typeof AppTemplatesRoute
+  AppTransmissionRoute: typeof AppTransmissionRoute
   AppIndexRoute: typeof AppIndexRoute
   AppCampaignsIdRoute: typeof AppCampaignsIdRoute
   AppCampaignsIndexRoute: typeof AppCampaignsIndexRoute
@@ -396,6 +416,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppProfileRoute: AppProfileRoute,
   AppSendRoute: AppSendRoute,
   AppTemplatesRoute: AppTemplatesRoute,
+  AppTransmissionRoute: AppTransmissionRoute,
   AppIndexRoute: AppIndexRoute,
   AppCampaignsIdRoute: AppCampaignsIdRoute,
   AppCampaignsIndexRoute: AppCampaignsIndexRoute,
