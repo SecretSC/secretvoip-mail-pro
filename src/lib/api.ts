@@ -277,6 +277,17 @@ export const api = {
   adminUnassignTemplate: (id: string, userIds: string[]) =>
     request<{ ok: true }>(`/api/admin/templates/${id}/unassign`, { method: "POST", body: JSON.stringify({ userIds }) }),
 
+  // Admin moderation of customer-owned templates
+  adminCustomerTemplates: (userId?: string) =>
+    request<(Template & { userId: string; userEmail: string | null; userName: string | null })[]>(
+      `/api/admin/customer-templates${userId ? `?userId=${userId}` : ""}`),
+  adminUpdateCustomerTemplate: (id: string, t: Pick<Template, "name" | "subject" | "html">) =>
+    request<{ ok: true }>(`/api/admin/customer-templates/${id}`, { method: "PUT", body: JSON.stringify(t) }),
+  adminDeleteCustomerTemplate: (id: string) =>
+    request<{ ok: true }>(`/api/admin/customer-templates/${id}`, { method: "DELETE" }),
+  adminCustomerTransmission: (id: string) =>
+    request<TransmissionEntry[]>(`/api/admin/customers/${id}/transmission`),
+
   // Settings
   settings: () => request<Record<string, any>>("/api/settings"),
   publicSettings: () => request<Record<string, any>>("/api/settings/public"),
