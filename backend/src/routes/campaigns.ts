@@ -7,12 +7,25 @@ import { finalizeCampaign } from "./email.js";
 const router = Router();
 router.use(requireAuth);
 
+async function normalizeStaleActiveCampaigns(userId?: string) {
+  const params: any[] = [];
+  const userWhere = userId ? ` AND user_id=$${params.push(userId)}` : "";
+  await query(
+    `UPDATE email_campaigns
+        SET status='cancelled', last_synced_at=COALESCE(last_synced_at, now())
+      WHERE finalized=true
+        AND status IN ('queued','processing','sending')${userWhere}`,
+    params,
+  );
+}
+
 // ============================================================
 // List campaigns (with progress fields)
 // ============================================================
 router.get("/", async (req, res) => {
   const user = req.user!;
   const all = req.query.all === "1" && user.role === "admin";
+  await normalizeStaleActiveCampaigns(all ? undefined : user.id);
   const limit = Math.min(parseInt(String(req.query.limit || "100")) || 100, 500);
   const params: any[] = [limit];
   let where = "";
@@ -57,6 +70,7 @@ router.get("/", async (req, res) => {
 // Active campaign (for current user) — used by Send page guard
 // ============================================================
 router.get("/active", async (req, res) => {
+  await normalizeStaleActiveCampaigns(req.user!.id);
   const { rows } = await query(
     `SELECT id, subject, status, total,
             queued_count AS "queuedCount",
@@ -65,7 +79,7 @@ router.get("/active", async (req, res) => {
             bounced_count AS "bouncedCount",
             created_at AS "createdAt"
        FROM email_campaigns
-      WHERE user_id=$1 AND status IN ('queued','processing','sending')
+      WHERE user_id=$1 AND finalized=false AND status IN ('queued','processing','sending')
       ORDER BY created_at DESC LIMIT 1`,
     [req.user!.id],
   );

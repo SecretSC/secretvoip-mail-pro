@@ -22,10 +22,19 @@ const SendSchema = z.object({
 router.post("/send", requireAuth, async (req, res) => {
   const user = req.user!;
 
+  // Normalize older cancelled/finalized rows that may still carry an active
+  // status from previous builds, then block only real non-finalized campaigns.
+  await query(
+    `UPDATE email_campaigns
+        SET status='cancelled', last_synced_at=COALESCE(last_synced_at, now())
+      WHERE user_id=$1 AND finalized=true AND status IN ('queued','processing','sending')`,
+    [user.id],
+  );
+
   // Block if user already has an active campaign
   const { rows: active } = await query<{ id: string }>(
     `SELECT id FROM email_campaigns
-      WHERE user_id=$1 AND status IN ('queued','processing','sending')
+      WHERE user_id=$1 AND finalized=false AND status IN ('queued','processing','sending')
       LIMIT 1`,
     [user.id],
   );
