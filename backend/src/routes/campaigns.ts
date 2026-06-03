@@ -295,7 +295,7 @@ router.post("/:id/cancel", async (req, res) => {
 
     await query(
       `UPDATE email_campaigns
-          SET status='cancelled', finalized=true, finalized_at=now(), last_synced_at=now()
+          SET status='cancelled', finalized=true, last_synced_at=now()
         WHERE id=$1`,
       [req.params.id],
     );
