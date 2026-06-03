@@ -7,8 +7,6 @@ import { finalizeCampaign } from "./email.js";
 const router = Router();
 router.use(requireAuth);
 
-const ACTIVE_STATUSES = ["queued", "processing", "sending"];
-
 async function normalizeStaleActiveCampaigns(userId?: string) {
   const params: any[] = [];
   const userWhere = userId ? ` AND user_id=$${params.push(userId)}` : "";
