@@ -21,6 +21,7 @@ import { Route as AppCampaignsRouteImport } from './routes/app.campaigns'
 import { Route as AppAdminRouteImport } from './routes/app.admin'
 import { Route as AppAdminIndexRouteImport } from './routes/app.admin.index'
 import { Route as AppCampaignsIdRouteImport } from './routes/app.campaigns.$id'
+import { Route as AppAdminTemplatesRouteImport } from './routes/app.admin.templates'
 import { Route as AppAdminSettingsRouteImport } from './routes/app.admin.settings'
 import { Route as AppAdminErrorsRouteImport } from './routes/app.admin.errors'
 import { Route as AppAdminDiagnosticsRouteImport } from './routes/app.admin.diagnostics'
@@ -86,6 +87,11 @@ const AppCampaignsIdRoute = AppCampaignsIdRouteImport.update({
   path: '/$id',
   getParentRoute: () => AppCampaignsRoute,
 } as any)
+const AppAdminTemplatesRoute = AppAdminTemplatesRouteImport.update({
+  id: '/templates',
+  path: '/templates',
+  getParentRoute: () => AppAdminRoute,
+} as any)
 const AppAdminSettingsRoute = AppAdminSettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
@@ -122,6 +128,7 @@ export interface FileRoutesByFullPath {
   '/app/admin/diagnostics': typeof AppAdminDiagnosticsRoute
   '/app/admin/errors': typeof AppAdminErrorsRoute
   '/app/admin/settings': typeof AppAdminSettingsRoute
+  '/app/admin/templates': typeof AppAdminTemplatesRoute
   '/app/campaigns/$id': typeof AppCampaignsIdRoute
   '/app/admin/': typeof AppAdminIndexRoute
 }
@@ -138,6 +145,7 @@ export interface FileRoutesByTo {
   '/app/admin/diagnostics': typeof AppAdminDiagnosticsRoute
   '/app/admin/errors': typeof AppAdminErrorsRoute
   '/app/admin/settings': typeof AppAdminSettingsRoute
+  '/app/admin/templates': typeof AppAdminTemplatesRoute
   '/app/campaigns/$id': typeof AppCampaignsIdRoute
   '/app/admin': typeof AppAdminIndexRoute
 }
@@ -157,6 +165,7 @@ export interface FileRoutesById {
   '/app/admin/diagnostics': typeof AppAdminDiagnosticsRoute
   '/app/admin/errors': typeof AppAdminErrorsRoute
   '/app/admin/settings': typeof AppAdminSettingsRoute
+  '/app/admin/templates': typeof AppAdminTemplatesRoute
   '/app/campaigns/$id': typeof AppCampaignsIdRoute
   '/app/admin/': typeof AppAdminIndexRoute
 }
@@ -177,6 +186,7 @@ export interface FileRouteTypes {
     | '/app/admin/diagnostics'
     | '/app/admin/errors'
     | '/app/admin/settings'
+    | '/app/admin/templates'
     | '/app/campaigns/$id'
     | '/app/admin/'
   fileRoutesByTo: FileRoutesByTo
@@ -193,6 +203,7 @@ export interface FileRouteTypes {
     | '/app/admin/diagnostics'
     | '/app/admin/errors'
     | '/app/admin/settings'
+    | '/app/admin/templates'
     | '/app/campaigns/$id'
     | '/app/admin'
   id:
@@ -211,6 +222,7 @@ export interface FileRouteTypes {
     | '/app/admin/diagnostics'
     | '/app/admin/errors'
     | '/app/admin/settings'
+    | '/app/admin/templates'
     | '/app/campaigns/$id'
     | '/app/admin/'
   fileRoutesById: FileRoutesById
@@ -307,6 +319,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppCampaignsIdRouteImport
       parentRoute: typeof AppCampaignsRoute
     }
+    '/app/admin/templates': {
+      id: '/app/admin/templates'
+      path: '/templates'
+      fullPath: '/app/admin/templates'
+      preLoaderRoute: typeof AppAdminTemplatesRouteImport
+      parentRoute: typeof AppAdminRoute
+    }
     '/app/admin/settings': {
       id: '/app/admin/settings'
       path: '/settings'
@@ -343,6 +362,7 @@ interface AppAdminRouteChildren {
   AppAdminDiagnosticsRoute: typeof AppAdminDiagnosticsRoute
   AppAdminErrorsRoute: typeof AppAdminErrorsRoute
   AppAdminSettingsRoute: typeof AppAdminSettingsRoute
+  AppAdminTemplatesRoute: typeof AppAdminTemplatesRoute
   AppAdminIndexRoute: typeof AppAdminIndexRoute
 }
 
@@ -351,6 +371,7 @@ const AppAdminRouteChildren: AppAdminRouteChildren = {
   AppAdminDiagnosticsRoute: AppAdminDiagnosticsRoute,
   AppAdminErrorsRoute: AppAdminErrorsRoute,
   AppAdminSettingsRoute: AppAdminSettingsRoute,
+  AppAdminTemplatesRoute: AppAdminTemplatesRoute,
   AppAdminIndexRoute: AppAdminIndexRoute,
 }
 

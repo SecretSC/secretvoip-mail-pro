@@ -55,8 +55,8 @@ function ProfilePage() {
             Account
           </div>
           <dl className="mt-4 space-y-3 text-sm">
+            <Row k="Username" v={user?.username || "—"} />
             <Row k="Name" v={user?.fullName || "—"} />
-            <Row k="Email" v={user?.email || "—"} />
             <Row k="Role" v={user?.role || "—"} />
             <Row k="Status" v={user?.status || "—"} />
           </dl>

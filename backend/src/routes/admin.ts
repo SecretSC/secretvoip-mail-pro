@@ -8,10 +8,14 @@ const router = Router();
 
 router.use(requireAuth, requireAdmin);
 
-// List customers
+const USERNAME_RE = /^[a-zA-Z0-9._-]{2,40}$/;
+
+// ============================================================
+// CUSTOMERS
+// ============================================================
 router.get("/customers", async (_req, res) => {
   const { rows } = await query(
-    `SELECT id, email, full_name AS "fullName", role, status,
+    `SELECT id, username, email, full_name AS "fullName", role, status,
             balance::float AS balance, notes, created_at AS "createdAt"
        FROM users
       WHERE role = 'customer'
@@ -20,48 +24,94 @@ router.get("/customers", async (_req, res) => {
   res.json(rows);
 });
 
-// Create customer
+// Create customer — USERNAME based (no email required).
 const CreateCustomer = z.object({
-  email: z.string().email().max(255),
-  fullName: z.string().trim().min(1).max(120),
-  password: z.string().min(8).max(255),
+  username: z.string().trim().min(2).max(40).regex(USERNAME_RE),
+  password: z.string().min(6).max(255),
   balance: z.number().min(0).max(1_000_000).default(0),
+  fullName: z.string().trim().min(1).max(120).optional(),
   notes: z.string().max(2000).optional(),
 });
 router.post("/customers", async (req, res) => {
   const parsed = CreateCustomer.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: "Invalid input" });
-  // Trim defensively — autocomplete / paste often inserts whitespace.
-  const email = parsed.data.email.trim().toLowerCase();
-  const fullName = parsed.data.fullName.trim();
-  const password = parsed.data.password; // do NOT mutate; preserves exact chars admin showed customer
+  if (!parsed.success) {
+    return res.status(400).json({
+      error: "Invalid input — username 2–40 chars (letters, numbers, . _ -), password ≥ 6.",
+    });
+  }
+  const username = parsed.data.username.trim();
+  const password = parsed.data.password;
+  const fullName = (parsed.data.fullName ?? username).trim();
   const { balance, notes } = parsed.data;
-  if (password.trim().length < 8) {
-    return res.status(400).json({ error: "Password must be at least 8 visible characters" });
+  if (password.trim().length < 6) {
+    return res.status(400).json({ error: "Password must be at least 6 visible characters" });
   }
   const passwordHash = await hashPassword(password);
   try {
     const { rows } = await query<{ id: string }>(
-      `INSERT INTO users (email, full_name, password_hash, role, status, balance, notes)
+      `INSERT INTO users (username, full_name, password_hash, role, status, balance, notes)
        VALUES ($1, $2, $3, 'customer', 'active', $4, $5)
        RETURNING id`,
-      [email, fullName, passwordHash, balance, notes || null],
+      [username, fullName, passwordHash, balance, notes || null],
     );
     await query(
       `INSERT INTO audit_logs (admin_id, action, target_user_id, changes)
        VALUES ($1, 'create_customer', $2, $3)`,
-      [req.user!.id, rows[0].id, JSON.stringify({ email, fullName, balance })],
+      [req.user!.id, rows[0].id, JSON.stringify({ username, balance })],
     );
-    console.log(`[admin] created customer ${email} (id=${rows[0].id})`);
-    res.json({ id: rows[0].id });
+    console.log(`[admin] created customer ${username} (id=${rows[0].id})`);
+    res.json({ id: rows[0].id, username });
   } catch (err: any) {
     if (err?.code === "23505")
-      return res.status(409).json({ error: "Email already exists" });
+      return res.status(409).json({ error: "Username already taken" });
     throw err;
   }
 });
 
-// Suspend / unsuspend
+// Edit username / fullName / notes
+const EditCustomer = z.object({
+  username: z.string().trim().min(2).max(40).regex(USERNAME_RE).optional(),
+  fullName: z.string().trim().min(1).max(120).optional(),
+  notes: z.string().max(2000).nullable().optional(),
+});
+router.patch("/customers/:id", async (req, res) => {
+  const p = EditCustomer.safeParse(req.body);
+  if (!p.success) return res.status(400).json({ error: "Invalid input" });
+  const fields: string[] = [];
+  const vals: any[] = [];
+  let i = 1;
+  if (p.data.username !== undefined) {
+    fields.push(`username = $${i++}`);
+    vals.push(p.data.username);
+  }
+  if (p.data.fullName !== undefined) {
+    fields.push(`full_name = $${i++}`);
+    vals.push(p.data.fullName);
+  }
+  if (p.data.notes !== undefined) {
+    fields.push(`notes = $${i++}`);
+    vals.push(p.data.notes);
+  }
+  if (fields.length === 0) return res.json({ ok: true });
+  vals.push(req.params.id);
+  try {
+    await query(
+      `UPDATE users SET ${fields.join(", ")}, updated_at = now()
+        WHERE id = $${i} AND role IN ('customer','admin')`,
+      vals,
+    );
+  } catch (err: any) {
+    if (err?.code === "23505") return res.status(409).json({ error: "Username already taken" });
+    throw err;
+  }
+  await query(
+    `INSERT INTO audit_logs (admin_id, action, target_user_id, changes)
+     VALUES ($1, 'edit_customer', $2, $3)`,
+    [req.user!.id, req.params.id, JSON.stringify(p.data)],
+  );
+  res.json({ ok: true });
+});
+
 router.post("/customers/:id/status", async (req, res) => {
   const status = req.body?.status;
   if (status !== "active" && status !== "suspended") {
@@ -79,13 +129,11 @@ router.post("/customers/:id/status", async (req, res) => {
   res.json({ ok: true });
 });
 
-// Reset password
 router.post("/customers/:id/password", async (req, res) => {
   const raw = String(req.body?.password ?? "");
-  // Trim leading/trailing whitespace defensively — these almost always come from paste.
   const password = raw.replace(/^\s+|\s+$/g, "");
-  if (password.length < 8)
-    return res.status(400).json({ error: "Password must be at least 8 characters" });
+  if (password.length < 6)
+    return res.status(400).json({ error: "Password must be at least 6 characters" });
   const hash = await hashPassword(password);
   const { rowCount } = await query(
     `UPDATE users SET password_hash=$2 WHERE id=$1 AND role IN ('customer','admin')`,
@@ -98,10 +146,10 @@ router.post("/customers/:id/password", async (req, res) => {
     [req.user!.id, req.params.id, JSON.stringify({})],
   );
   console.log(`[admin] reset password for user id=${req.params.id}`);
-  res.json({ ok: true });
+  // Echo password back ONCE so admin can copy & share. Never stored plain.
+  res.json({ ok: true, password });
 });
 
-// Wallet top-up / withdraw
 const WalletOp = z.object({
   amount: z.number().min(-1_000_000).max(1_000_000),
   reason: z.string().trim().min(1).max(500),
@@ -152,14 +200,13 @@ router.post("/customers/:id/wallet", async (req, res) => {
   }
 });
 
-// Diagnostics — DB, uptime, provider config status
+// ============================================================
+// DIAGNOSTICS
+// ============================================================
 router.get("/diagnostics", async (_req, res) => {
   const t0 = Date.now();
   let dbOk = false;
-  try {
-    await query("SELECT 1");
-    dbOk = true;
-  } catch {}
+  try { await query("SELECT 1"); dbOk = true; } catch {}
   res.json({
     db: dbOk,
     uptimeSec: Math.round(process.uptime()),
@@ -167,21 +214,15 @@ router.get("/diagnostics", async (_req, res) => {
     latencyMs: Date.now() - t0,
     provider: {
       configured: Boolean(config.mailProviderApiKey && config.mailProviderBaseUrl),
-      // We intentionally do NOT expose the full URL or any part of the key.
       baseHost: safeHost(config.mailProviderBaseUrl),
     },
   });
 });
 
 function safeHost(u: string): string {
-  try {
-    return new URL(u).host;
-  } catch {
-    return "—";
-  }
+  try { return new URL(u).host; } catch { return "—"; }
 }
 
-// Live provider connection test — admin-only
 router.post("/provider/test", async (_req, res) => {
   const t0 = Date.now();
   try {
@@ -191,8 +232,6 @@ router.post("/provider/test", async (_req, res) => {
         "Content-Type": "application/json",
         Authorization: `Bearer ${config.mailProviderApiKey}`,
       },
-      // Empty recipient list — provider should reply with a validation error
-      // quickly, which is enough to prove auth + connectivity.
       body: JSON.stringify({
         fromName: "SecretVoIP Mail Diagnostics",
         subject: "ping",
@@ -207,21 +246,17 @@ router.post("/provider/test", async (_req, res) => {
       status: resp.status,
       latencyMs: latency,
       reachable: true,
-      // 401 means key invalid; 400 means reached and authed but rejected payload — both prove reachability.
       authOk: resp.status !== 401 && resp.status !== 403,
       responsePreview: text.slice(0, 500),
     });
   } catch (err: any) {
-    res.json({
-      ok: false,
-      reachable: false,
-      latencyMs: Date.now() - t0,
-      error: String(err?.message || err),
-    });
+    res.json({ ok: false, reachable: false, latencyMs: Date.now() - t0, error: String(err?.message || err) });
   }
 });
 
-// Error log
+// ============================================================
+// ERROR LOG / AUDIT / OVERVIEW
+// ============================================================
 router.get("/errors", async (req, res) => {
   const limit = Math.min(parseInt(String(req.query.limit || "100")) || 100, 500);
   const { rows } = await query(
@@ -229,7 +264,7 @@ router.get("/errors", async (req, res) => {
             e.request_summary AS "requestSummary",
             e.response_summary AS "responseSummary",
             e.resolved, e.notes, e.created_at AS "createdAt",
-            u.email AS "userEmail",
+            COALESCE(u.username, u.email) AS "userEmail",
             e.campaign_id AS "campaignId"
        FROM error_logs e
        LEFT JOIN users u ON u.id = e.user_id
@@ -241,60 +276,44 @@ router.get("/errors", async (req, res) => {
 });
 
 router.post("/errors/:id/resolve", async (req, res) => {
-  await query(
-    `UPDATE error_logs SET resolved = true, notes = $2 WHERE id = $1`,
-    [req.params.id, req.body?.notes || null],
-  );
+  await query(`UPDATE error_logs SET resolved = true, notes = $2 WHERE id = $1`,
+    [req.params.id, req.body?.notes || null]);
   res.json({ ok: true });
 });
 
-// Wallet history for a customer
 router.get("/customers/:id/wallet", async (req, res) => {
   const { rows } = await query(
     `SELECT id, amount::float AS amount,
             previous_balance::float AS "previousBalance",
             new_balance::float AS "newBalance",
             reason, created_at AS "createdAt"
-       FROM wallet_transactions
-      WHERE user_id = $1
-      ORDER BY created_at DESC
-      LIMIT 200`,
+       FROM wallet_transactions WHERE user_id = $1
+      ORDER BY created_at DESC LIMIT 200`,
     [req.params.id],
   );
   res.json(rows);
 });
 
-// Recent admin audit log
 router.get("/audit", async (_req, res) => {
   const { rows } = await query(
     `SELECT a.id, a.action, a.changes, a.created_at AS "createdAt",
-            admin_u.email AS "adminEmail",
-            target_u.email AS "targetEmail"
+            COALESCE(admin_u.username, admin_u.email) AS "adminEmail",
+            COALESCE(target_u.username, target_u.email) AS "targetEmail"
        FROM audit_logs a
        LEFT JOIN users admin_u ON admin_u.id = a.admin_id
        LEFT JOIN users target_u ON target_u.id = a.target_user_id
-      ORDER BY a.created_at DESC
-      LIMIT 200`,
+      ORDER BY a.created_at DESC LIMIT 200`,
   );
   res.json(rows);
 });
 
-// Platform overview stats (now with profit)
 router.get("/overview", async (_req, res) => {
   const { rows: users } = await query<{ total: number; suspended: number }>(
     `SELECT COUNT(*)::int AS total,
             SUM(CASE WHEN status='suspended' THEN 1 ELSE 0 END)::int AS suspended
        FROM users WHERE role='customer'`,
   );
-  const { rows: camp } = await query<{
-    total: number;
-    accepted: number;
-    failed: number;
-    revenue: number;
-    providerCost: number;
-    profit: number;
-    today: number;
-  }>(
+  const { rows: camp } = await query(
     `SELECT COUNT(*)::int AS total,
             COALESCE(SUM(accepted),0)::int AS accepted,
             COALESCE(SUM(failed),0)::int AS failed,
@@ -308,20 +327,16 @@ router.get("/overview", async (_req, res) => {
   const { rows: errs } = await query<{ open: number }>(
     `SELECT COUNT(*)::int AS open FROM error_logs WHERE resolved = false`,
   );
-  res.json({
-    customers: users[0],
-    campaigns: camp[0],
-    errors: errs[0],
-  });
+  res.json({ customers: users[0], campaigns: camp[0], errors: errs[0] });
 });
 
 // ============================================================
-// Customer history — campaigns + wallet + activity in one go
+// CUSTOMER HISTORY
 // ============================================================
 router.get("/customers/:id/history", async (req, res) => {
   const id = req.params.id;
   const { rows: profile } = await query(
-    `SELECT id, email, full_name AS "fullName", role, status,
+    `SELECT id, username, email, full_name AS "fullName", role, status,
             balance::float AS balance, notes, created_at AS "createdAt"
        FROM users WHERE id=$1`,
     [id],
@@ -338,8 +353,7 @@ router.get("/customers/:id/history", async (req, res) => {
             status, error, created_at AS "createdAt"
        FROM email_campaigns
       WHERE user_id=$1
-      ORDER BY created_at DESC
-      LIMIT 500`,
+      ORDER BY created_at DESC LIMIT 500`,
     [id],
   );
   const { rows: wallet } = await query(
@@ -347,10 +361,8 @@ router.get("/customers/:id/history", async (req, res) => {
             previous_balance::float AS "previousBalance",
             new_balance::float AS "newBalance",
             reason, created_at AS "createdAt"
-       FROM wallet_transactions
-      WHERE user_id=$1
-      ORDER BY created_at DESC
-      LIMIT 500`,
+       FROM wallet_transactions WHERE user_id=$1
+      ORDER BY created_at DESC LIMIT 500`,
     [id],
   );
   const { rows: activity } = await query(
@@ -359,23 +371,17 @@ router.get("/customers/:id/history", async (req, res) => {
       ORDER BY created_at DESC LIMIT 200`,
     [id],
   );
-
   const totals = campaigns.reduce(
     (acc, c: any) => {
-      acc.accepted += c.accepted;
-      acc.failed += c.failed;
-      acc.revenue += c.cost;
-      acc.providerCost += c.providerCost;
-      acc.profit += c.profit;
-      return acc;
+      acc.accepted += c.accepted; acc.failed += c.failed;
+      acc.revenue += c.cost; acc.providerCost += c.providerCost;
+      acc.profit += c.profit; return acc;
     },
     { accepted: 0, failed: 0, revenue: 0, providerCost: 0, profit: 0 },
   );
-
   res.json({ profile: profile[0], campaigns, wallet, activity, totals });
 });
 
-// CSV exports for a customer
 function toCsv(rows: any[], cols: string[]): string {
   const esc = (v: any) => `"${String(v ?? "").replace(/"/g, '""')}"`;
   return [cols.join(","), ...rows.map((r) => cols.map((c) => esc(r[c])).join(","))].join("\n");
@@ -392,12 +398,7 @@ router.get("/customers/:id/campaigns.csv", async (req, res) => {
   );
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
   res.setHeader("Content-Disposition", `attachment; filename="customer-${req.params.id}-campaigns.csv"`);
-  res.send(
-    toCsv(rows, [
-      "createdAt", "fromName", "subject", "total", "accepted",
-      "failed", "cost", "providerCost", "profit", "status",
-    ]),
-  );
+  res.send(toCsv(rows, ["createdAt","fromName","subject","total","accepted","failed","cost","providerCost","profit","status"]));
 });
 
 router.get("/customers/:id/wallet.csv", async (req, res) => {
@@ -410,7 +411,88 @@ router.get("/customers/:id/wallet.csv", async (req, res) => {
   );
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
   res.setHeader("Content-Disposition", `attachment; filename="customer-${req.params.id}-wallet.csv"`);
-  res.send(toCsv(rows, ["createdAt", "amount", "previousBalance", "newBalance", "reason"]));
+  res.send(toCsv(rows, ["createdAt","amount","previousBalance","newBalance","reason"]));
+});
+
+// ============================================================
+// PRIVATE TEMPLATES (admin-owned, assignable)
+// ============================================================
+const PrivTplSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  subject: z.string().trim().min(1).max(500),
+  html: z.string().trim().min(1).max(200_000),
+});
+
+router.get("/templates", async (_req, res) => {
+  const { rows } = await query(
+    `SELECT t.id, t.name, t.subject, t.html,
+            t.created_at AS "createdAt", t.updated_at AS "updatedAt",
+            COALESCE(
+              (SELECT json_agg(json_build_object(
+                'userId', a.user_id,
+                'username', u.username,
+                'fullName', u.full_name
+              )) FROM template_assignments a
+                 JOIN users u ON u.id = a.user_id
+                 WHERE a.template_id = t.id),
+              '[]'::json) AS "assignees"
+       FROM saved_templates t
+      WHERE t.scope = 'admin_private'
+      ORDER BY t.updated_at DESC`,
+  );
+  res.json(rows);
+});
+
+router.post("/templates", async (req, res) => {
+  const p = PrivTplSchema.safeParse(req.body);
+  if (!p.success) return res.status(400).json({ error: "Invalid input" });
+  const { rows } = await query<{ id: string }>(
+    `INSERT INTO saved_templates (user_id, name, subject, html, scope)
+     VALUES (NULL, $1, $2, $3, 'admin_private') RETURNING id`,
+    [p.data.name, p.data.subject, p.data.html],
+  );
+  res.json({ id: rows[0].id });
+});
+
+router.put("/templates/:id", async (req, res) => {
+  const p = PrivTplSchema.safeParse(req.body);
+  if (!p.success) return res.status(400).json({ error: "Invalid input" });
+  const { rowCount } = await query(
+    `UPDATE saved_templates SET name=$2, subject=$3, html=$4, updated_at=now()
+      WHERE id=$1 AND scope='admin_private'`,
+    [req.params.id, p.data.name, p.data.subject, p.data.html],
+  );
+  if (rowCount === 0) return res.status(404).json({ error: "Not found" });
+  res.json({ ok: true });
+});
+
+router.delete("/templates/:id", async (req, res) => {
+  await query(`DELETE FROM saved_templates WHERE id=$1 AND scope='admin_private'`, [req.params.id]);
+  res.json({ ok: true });
+});
+
+router.post("/templates/:id/assign", async (req, res) => {
+  const userIds: string[] = Array.isArray(req.body?.userIds) ? req.body.userIds : [];
+  if (userIds.length === 0) return res.status(400).json({ error: "userIds required" });
+  for (const uid of userIds) {
+    await query(
+      `INSERT INTO template_assignments (template_id, user_id, assigned_by)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (template_id, user_id) DO NOTHING`,
+      [req.params.id, uid, req.user!.id],
+    );
+  }
+  res.json({ ok: true });
+});
+
+router.post("/templates/:id/unassign", async (req, res) => {
+  const userIds: string[] = Array.isArray(req.body?.userIds) ? req.body.userIds : [];
+  if (userIds.length === 0) return res.status(400).json({ error: "userIds required" });
+  await query(
+    `DELETE FROM template_assignments WHERE template_id=$1 AND user_id = ANY($2::uuid[])`,
+    [req.params.id, userIds],
+  );
+  res.json({ ok: true });
 });
 
 export default router;
