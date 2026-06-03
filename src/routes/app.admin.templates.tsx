@@ -196,9 +196,9 @@ function AdminTemplatesPage() {
           </div>
         </section>
       </div>
+      )}
 
       {assignFor && <AssignModal template={assignFor} onClose={() => setAssignFor(null)} onSaved={() => { setAssignFor(null); load().then(() => {
-        // re-open updated active row
         if (active) api.adminPrivateTemplates().then((all) => { const f = all.find((x) => x.id === active.id); if (f) setActive(f); });
       }); }} />}
 
