@@ -1,17 +1,19 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { api, type Customer, type PrivateTemplate } from "@/lib/api";
+import { api, type Customer, type PrivateTemplate, type Template } from "@/lib/api";
 import { toast } from "sonner";
-import { Plus, Save, Trash2, Eye, Code2, X, FileText, Users, Check } from "lucide-react";
+import { Plus, Save, Trash2, Eye, Code2, X, FileText, Users, Check, ShieldCheck, UserCircle2 } from "lucide-react";
 
 export const Route = createFileRoute("/app/admin/templates")({
-  head: () => ({ meta: [{ title: "Private Templates — Admin" }] }),
+  head: () => ({ meta: [{ title: "Templates — Admin" }] }),
   component: AdminTemplatesPage,
 });
 
 type Mode = "html" | "preview" | "split";
+type Tab = "private" | "customer";
 
 function AdminTemplatesPage() {
+  const [tab, setTab] = useState<Tab>("private");
   const [items, setItems] = useState<PrivateTemplate[] | null>(null);
   const [active, setActive] = useState<PrivateTemplate | null>(null);
   const [name, setName] = useState("");
