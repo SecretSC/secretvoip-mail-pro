@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
-import { Send, Wallet, AlertCircle, CheckCircle2, FileText, Save, Loader2 } from "lucide-react";
-import { api, type Template, type ActiveCampaign } from "@/lib/api";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Send, Wallet, AlertCircle, FileText, Save, Loader2, X, Activity } from "lucide-react";
+import { api, type Template, type ActiveCampaign, type Recipient } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { toast } from "sonner";
 
@@ -12,6 +12,7 @@ export const Route = createFileRoute("/app/send")({
 
 const EMAIL_RE = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
 const MAX_RECIPIENTS = 5000;
+const POLL_MS = 1500;
 
 function parseRecipients(raw: string) {
   const tokens = raw.split(/[\s,;]+/).map((t) => t.trim()).filter(Boolean);
@@ -26,6 +27,21 @@ function parseRecipients(raw: string) {
   return { valid, invalid, duplicates };
 }
 
+function formatEta(seconds: number): string {
+  if (!seconds || !Number.isFinite(seconds) || seconds < 0) return "—";
+  const s = Math.round(seconds);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60), r = s % 60;
+  if (m < 60) return r ? `${m}m ${r}s` : `${m}m`;
+  const h = Math.floor(m / 60), rm = m % 60;
+  return rm ? `${h}h ${rm}m` : `${h}h`;
+}
+
+interface LiveStats {
+  sent: number; failed: number; total: number;
+  ratePerSec: number; etaSeconds: number; progressPct: number;
+}
+
 export function SendEmailPage() {
   const { user, refresh } = useAuth();
   const [fromName, setFromName] = useState("");
@@ -33,72 +49,112 @@ export function SendEmailPage() {
   const [html, setHtml] = useState("");
   const [recipientsRaw, setRecipientsRaw] = useState("");
   const [sending, setSending] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [pricePerEmail, setPricePerEmail] = useState<number | null>(null);
   const [support, setSupport] = useState("@Hamfranord");
   const [active, setActive] = useState<ActiveCampaign | null>(null);
+  const [activeCampaignId, setActiveCampaignId] = useState<string | null>(null);
+  const [live, setLive] = useState<LiveStats | null>(null);
+  const [logRecipients, setLogRecipients] = useState<Recipient[]>([]);
+  const [quota, setQuota] = useState<{ monthlySent: number; monthlyLimit: number; monthlyRemaining: number } | null>(null);
 
-  // ---- live data load
+  const pollRef = useRef<number | null>(null);
+
+  const loadQuota = useCallback(() => {
+    api.mailStats().then(setQuota).catch(() => {});
+  }, []);
+
+  // initial loads
   useEffect(() => {
     let mounted = true;
-    function loadPrice() {
-      api.publicSettings().then((s) => {
-        if (!mounted) return;
-        const v = Number(s.price_per_email);
-        if (!Number.isNaN(v)) setPricePerEmail(v);
-        if (s.support_telegram) setSupport(String(s.support_telegram));
-      }).catch(() => {});
-    }
-    loadPrice();
+    api.publicSettings().then((s) => {
+      if (!mounted) return;
+      const v = Number(s.price_per_email);
+      if (!Number.isNaN(v)) setPricePerEmail(v);
+      if (s.support_telegram) setSupport(String(s.support_telegram));
+    }).catch(() => {});
     api.templates().then(setTemplates).catch(() => {});
-    const onFocus = () => loadPrice();
-    window.addEventListener("focus", onFocus);
-    return () => { mounted = false; window.removeEventListener("focus", onFocus); };
-  }, []);
+    loadQuota();
+    // detect active campaign on mount (resume polling)
+    api.activeCampaign().then((a) => {
+      if (!mounted || !a) return;
+      setActive(a);
+      setActiveCampaignId(a.id);
+      setSending(true);
+    }).catch(() => {});
+    return () => { mounted = false; };
+  }, [loadQuota]);
 
-  // ---- poll active campaign every 10s
+  // live polling loop
   useEffect(() => {
+    if (!activeCampaignId) return;
     let alive = true;
+    let stopped = false;
+
     async function tick() {
+      if (!alive || !activeCampaignId) return;
       try {
-        const a = await api.activeCampaign();
+        const [sync, detail] = await Promise.all([
+          api.syncCampaign(activeCampaignId).catch(() => null),
+          api.campaign(activeCampaignId).catch(() => null),
+        ]);
         if (!alive) return;
-        setActive(a);
-        if (a && !a.id.startsWith("__")) {
-          // also sync provider state
-          try { await api.syncCampaign(a.id); } catch {}
+        if (sync?.live) {
+          setLive({
+            sent: sync.live.sent || 0,
+            failed: sync.live.failed || 0,
+            total: sync.live.total || 0,
+            ratePerSec: sync.live.ratePerSec || 0,
+            etaSeconds: sync.live.etaSeconds || 0,
+            progressPct: sync.live.progressPct || 0,
+          });
+        }
+        if (detail?.recipients) setLogRecipients(detail.recipients);
+        const status = sync?.status || detail?.campaign.status;
+        if (sync?.finalized || status === "completed" || status === "cancelled" || status === "failed" || status === "partial") {
+          stopped = true;
+          setSending(false);
+          setCancelling(false);
+          setActiveCampaignId(null);
+          setActive(null);
+          await refresh();
+          loadQuota();
+          toast.success(`Campaign ${status}`);
+          return;
         }
       } catch {}
+      if (!stopped && alive) {
+        pollRef.current = window.setTimeout(tick, POLL_MS);
+      }
     }
     tick();
-    const t = setInterval(tick, 10_000);
-    return () => { alive = false; clearInterval(t); };
-  }, []);
+    return () => {
+      alive = false;
+      if (pollRef.current) { clearTimeout(pollRef.current); pollRef.current = null; }
+    };
+  }, [activeCampaignId, refresh, loadQuota]);
 
   const parsed = useMemo(() => parseRecipients(recipientsRaw), [recipientsRaw]);
   const effectivePrice = pricePerEmail ?? 0;
   const estimate = parsed.valid.length * effectivePrice;
+  const overQuota = quota ? parsed.valid.length > quota.monthlyRemaining : false;
 
   function loadTemplate(id: string) {
-    const t = templates.find((x) => x.id === id);
-    if (!t) return;
+    const t = templates.find((x) => x.id === id); if (!t) return;
     setSubject(t.subject); setHtml(t.html);
     toast.success(`Loaded template "${t.name}"`);
   }
-
   async function saveAsTemplate() {
     const name = window.prompt("Template name");
     if (!name?.trim()) return;
-    if (!subject.trim() || !html.trim()) {
-      toast.error("Subject and HTML required to save a template"); return;
-    }
+    if (!subject.trim() || !html.trim()) { toast.error("Subject and HTML required"); return; }
     try {
       await api.createTemplate({ name: name.trim(), subject, html });
       toast.success("Template saved");
       setTemplates(await api.templates());
     } catch (e: any) { toast.error(e?.message || "Save failed"); }
   }
-
   function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]; if (!file) return;
     const reader = new FileReader();
@@ -111,9 +167,8 @@ export function SendEmailPage() {
 
   async function onSend(e: React.FormEvent) {
     e.preventDefault();
-    if (active) {
-      toast.error("Your previous campaign is still processing. Please wait until it completes.");
-      return;
+    if (active || activeCampaignId) {
+      toast.error("Your previous campaign is still processing."); return;
     }
     if (!fromName || !subject || !html || parsed.valid.length === 0) {
       toast.error("Fill in all fields and at least one valid recipient"); return;
@@ -121,27 +176,57 @@ export function SendEmailPage() {
     if (parsed.valid.length > MAX_RECIPIENTS) {
       toast.error(`Maximum ${MAX_RECIPIENTS} recipients per campaign`); return;
     }
+    if (overQuota) {
+      toast.error(`Over monthly quota — ${quota?.monthlyRemaining ?? 0} remaining`); return;
+    }
     if ((user?.balance ?? 0) < estimate) {
-      toast.error(`Insufficient wallet balance — contact ${support} on Telegram to top up`); return;
+      toast.error(`Insufficient balance — contact ${support} on Telegram to top up`); return;
     }
     setSending(true);
+    setLive({ sent: 0, failed: 0, total: parsed.valid.length, ratePerSec: 0, etaSeconds: 0, progressPct: 0 });
+    setLogRecipients([]);
     try {
       const res = await api.sendEmail({ fromName, subject, html, recipients: parsed.valid });
       if (res.status === "completed") {
-        const sent = res.sent ?? 0; const total = res.total ?? 0; const charged = res.charged ?? 0;
-        toast.success(`Campaign complete — ${sent}/${total} accepted · charged ${charged.toFixed(3)} €`);
-      } else {
-        toast.success(`Campaign queued (${res.queued ?? parsed.valid.length} recipients). Progress will update automatically.`);
+        toast.success(`Campaign complete — ${res.sent ?? 0}/${res.total ?? 0} accepted`);
+        setSending(false);
+        setLive(null);
+        await refresh();
+        loadQuota();
+      } else if (res.campaignId) {
+        // async path — start polling
+        setActiveCampaignId(res.campaignId);
+        setActive({
+          id: res.campaignId, subject, status: "processing",
+          total: parsed.valid.length, queuedCount: parsed.valid.length,
+          processingCount: 0, deliveredCount: 0, bouncedCount: 0,
+          createdAt: new Date().toISOString(),
+        });
+        setRecipientsRaw("");
+        toast.success(`Queued ${res.queued ?? parsed.valid.length} recipients`);
       }
-      // Clear form for next campaign
-      setRecipientsRaw("");
-      await refresh();
-      // Force refresh of active status
-      api.activeCampaign().then(setActive).catch(() => {});
     } catch (err: any) {
+      setSending(false);
+      setLive(null);
       toast.error(err?.message || "Send failed");
-    } finally { setSending(false); }
+    }
   }
+
+  async function onCancel() {
+    if (!activeCampaignId) return;
+    setCancelling(true);
+    try {
+      await api.cancelCampaign(activeCampaignId);
+      toast.success("Cancel requested");
+    } catch (err: any) {
+      setCancelling(false);
+      toast.error(err?.message || "Cancel failed");
+    }
+  }
+
+  const liveLabel = live
+    ? `Transmitting · ${(live.sent + live.failed).toLocaleString()}/${live.total.toLocaleString()} · ETA ${formatEta(live.etaSeconds)}`
+    : sending ? "Queueing campaign…" : `Send to ${parsed.valid.length.toLocaleString()} recipient${parsed.valid.length === 1 ? "" : "s"}`;
 
   return (
     <div className="p-4 sm:p-6 md:p-10 grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-6">
@@ -151,7 +236,8 @@ export function SendEmailPage() {
           <p className="mt-2 text-muted-foreground text-sm">Compose and dispatch a campaign — up to {MAX_RECIPIENTS.toLocaleString()} recipients.</p>
         </header>
 
-        {active && <ActiveBanner active={active} onUpdate={setActive} />}
+        {quota && <QuotaBar q={quota} />}
+        {active && <ActiveBanner active={active} live={live} />}
 
         <form onSubmit={onSend} className="mt-6 space-y-5">
           <div className="glass rounded-2xl p-4 flex flex-wrap items-center gap-3">
@@ -200,9 +286,9 @@ export function SendEmailPage() {
                     <AlertCircle size={12} /> {parsed.invalid.length} invalid will be skipped
                   </span>
                 )}
-                {parsed.valid.length > MAX_RECIPIENTS && (
+                {overQuota && (
                   <span className="text-destructive inline-flex items-center gap-1">
-                    <AlertCircle size={12} /> Maximum {MAX_RECIPIENTS.toLocaleString()} recipients per campaign
+                    <AlertCircle size={12} /> Over monthly quota ({quota?.monthlyRemaining ?? 0} left)
                   </span>
                 )}
               </div>
@@ -218,17 +304,64 @@ export function SendEmailPage() {
             </Field>
           </div>
 
-          <button type="submit" disabled={sending || !!active || parsed.valid.length === 0 || parsed.valid.length > MAX_RECIPIENTS}
-            className="w-full inline-flex items-center justify-center gap-2 rounded-xl px-6 py-4 text-sm font-semibold text-primary-foreground glow-primary disabled:opacity-50"
-            style={{ background: "var(--gradient-primary)" }}>
-            {sending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-            {active
-              ? "Wait for current campaign to finish"
-              : sending
-                ? "Queueing campaign…"
-                : `Send to ${parsed.valid.length.toLocaleString()} recipient${parsed.valid.length === 1 ? "" : "s"}`}
-          </button>
+          <div className="flex gap-3">
+            <button type="submit"
+              disabled={sending || !!active || parsed.valid.length === 0 || parsed.valid.length > MAX_RECIPIENTS || overQuota}
+              className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl px-6 py-4 text-sm font-semibold text-primary-foreground glow-primary disabled:opacity-50"
+              style={{ background: "var(--gradient-primary)" }}>
+              {sending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+              {liveLabel}
+            </button>
+            {sending && activeCampaignId && (
+              <button type="button" onClick={onCancel} disabled={cancelling}
+                className="inline-flex items-center justify-center gap-2 rounded-xl px-5 py-4 text-sm font-semibold border border-destructive/60 text-destructive hover:bg-destructive/10 disabled:opacity-50">
+                {cancelling ? <Loader2 size={14} className="animate-spin" /> : <X size={14} />}
+                {cancelling ? "Cancelling" : "Cancel"}
+              </button>
+            )}
+          </div>
+
+          {live && (
+            <div className="glass rounded-2xl p-4 space-y-2">
+              <div className="flex justify-between text-[0.7rem] text-muted-foreground">
+                <span>Live · {live.sent.toLocaleString()} sent · {live.failed.toLocaleString()} failed · {live.ratePerSec.toFixed(1)}/s · ETA {formatEta(live.etaSeconds)}</span>
+                <span className="tabular-nums">{Math.round(live.progressPct)}%</span>
+              </div>
+              <div className="h-2 bg-card/40 rounded-full overflow-hidden">
+                <div className="h-full bg-gradient-to-r from-info to-primary transition-all duration-500"
+                  style={{ width: `${Math.min(100, live.progressPct)}%` }} />
+              </div>
+            </div>
+          )}
         </form>
+
+        {logRecipients.length > 0 && (
+          <div className="mt-6 glass rounded-2xl overflow-hidden">
+            <div className="px-4 py-3 border-b border-border flex items-center gap-2 text-xs uppercase tracking-wider text-muted-foreground">
+              <Activity size={12} /> Transmission log · {logRecipients.length.toLocaleString()} recipients
+            </div>
+            <div className="max-h-[420px] overflow-auto">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-background/95 backdrop-blur">
+                  <tr className="text-left text-[0.625rem] uppercase tracking-wider text-muted-foreground border-b border-border">
+                    <th className="px-4 py-2">Recipient</th>
+                    <th className="px-4 py-2">Status</th>
+                    <th className="px-4 py-2">Error</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {logRecipients.slice(0, 500).map((r) => (
+                    <tr key={r.email} className="border-t border-border/30">
+                      <td className="px-4 py-1.5 font-mono">{r.email}</td>
+                      <td className="px-4 py-1.5"><RecipientBadge status={r.status || (r.accepted ? "delivered" : "queued")} /></td>
+                      <td className="px-4 py-1.5 text-destructive truncate max-w-[260px]">{r.error || ""}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
 
       <aside className="space-y-4 xl:sticky xl:top-4 xl:self-start">
@@ -284,17 +417,29 @@ export function SendEmailPage() {
   );
 }
 
-function ActiveBanner({ active, onUpdate }: { active: ActiveCampaign; onUpdate: (a: ActiveCampaign | null) => void }) {
-  const total = active.total || 1;
-  const done = (active.deliveredCount || 0) + (active.bouncedCount || 0);
+function QuotaBar({ q }: { q: { monthlySent: number; monthlyLimit: number; monthlyRemaining: number } }) {
+  const pct = q.monthlyLimit > 0 ? Math.min(100, (q.monthlySent / q.monthlyLimit) * 100) : 0;
+  return (
+    <div className="mt-4 glass rounded-2xl p-4 space-y-2">
+      <div className="flex justify-between text-xs">
+        <span className="text-muted-foreground uppercase tracking-wider text-[0.625rem]">Monthly quota</span>
+        <span className="tabular-nums">
+          {q.monthlySent.toLocaleString()} / {q.monthlyLimit.toLocaleString()}
+          <span className="text-muted-foreground"> · {q.monthlyRemaining.toLocaleString()} left</span>
+        </span>
+      </div>
+      <div className="h-1.5 bg-card/40 rounded-full overflow-hidden">
+        <div className={`h-full transition-all ${pct > 90 ? "bg-destructive" : pct > 70 ? "bg-warning" : "bg-info"}`}
+          style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function ActiveBanner({ active, live }: { active: ActiveCampaign; live: LiveStats | null }) {
+  const total = live?.total || active.total || 1;
+  const done = live ? (live.sent + live.failed) : ((active.deliveredCount || 0) + (active.bouncedCount || 0));
   const pct = Math.min(100, Math.round((done / total) * 100));
-  async function refresh() {
-    try {
-      await api.syncCampaign(active.id);
-      const next = await api.activeCampaign();
-      onUpdate(next);
-    } catch {}
-  }
   return (
     <div className="mt-6 glass card-ring-primary rounded-2xl p-5 space-y-3 border border-info/30">
       <div className="flex items-center justify-between flex-wrap gap-2">
@@ -303,20 +448,17 @@ function ActiveBanner({ active, onUpdate }: { active: ActiveCampaign; onUpdate: 
           <span className="text-sm font-semibold uppercase tracking-wider">{active.status}</span>
           <span className="text-xs text-muted-foreground">· {active.subject}</span>
         </div>
-        <div className="flex gap-2">
-          <button onClick={refresh} className="text-xs px-3 py-1.5 rounded-md glass hover:bg-card/60">Refresh</button>
-          <Link to="/app/campaigns/$id" params={{ id: active.id }} className="text-xs px-3 py-1.5 rounded-md glass hover:bg-card/60 text-info">Open detail</Link>
-        </div>
+        <Link to="/app/campaigns/$id" params={{ id: active.id }} className="text-xs px-3 py-1.5 rounded-md glass hover:bg-card/60 text-info">Open detail</Link>
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
         <Mini label="Total" value={total} />
-        <Mini label="Queued" value={active.queuedCount || 0} tone="info" />
-        <Mini label="Delivered" value={active.deliveredCount || 0} tone="success" />
-        <Mini label="Bounced" value={active.bouncedCount || 0} tone="destructive" />
+        <Mini label="Sent" value={live?.sent ?? active.deliveredCount ?? 0} tone="success" />
+        <Mini label="Failed" value={live?.failed ?? active.bouncedCount ?? 0} tone="destructive" />
+        <Mini label="Rate / s" value={live ? Number(live.ratePerSec.toFixed(1)) : 0} tone="info" />
       </div>
       <div>
         <div className="flex justify-between text-[0.7rem] text-muted-foreground mb-1">
-          <span>Progress</span><span className="tabular-nums">{pct}%</span>
+          <span>Progress · ETA {formatEta(live?.etaSeconds ?? 0)}</span><span className="tabular-nums">{pct}%</span>
         </div>
         <div className="h-2 bg-card/40 rounded-full overflow-hidden">
           <div className="h-full bg-gradient-to-r from-info to-primary transition-all" style={{ width: `${pct}%` }} />
@@ -324,6 +466,19 @@ function ActiveBanner({ active, onUpdate }: { active: ActiveCampaign; onUpdate: 
       </div>
     </div>
   );
+}
+
+function RecipientBadge({ status }: { status: string }) {
+  const s = (status || "").toLowerCase();
+  const tone =
+    s === "delivered" || s === "sent" || s === "completed" ? "bg-success/15 text-success"
+    : s === "failed" || s === "bounced" || s === "invalid" || s === "cancelled" ? "bg-destructive/15 text-destructive"
+    : s === "processing" || s === "sending" ? "bg-info/15 text-info"
+    : "bg-muted/30 text-muted-foreground";
+  return <span className={`px-2 py-0.5 rounded text-[0.6rem] uppercase font-semibold tracking-wider inline-flex items-center gap-1 ${tone}`}>
+    {(s === "processing" || s === "sending") && <Loader2 size={8} className="animate-spin" />}
+    {s || "—"}
+  </span>;
 }
 
 function Mini({ label, value, tone }: { label: string; value: number; tone?: "info" | "success" | "destructive" }) {
