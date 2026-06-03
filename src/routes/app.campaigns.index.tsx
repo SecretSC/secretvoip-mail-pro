@@ -4,7 +4,7 @@ import { api, type Campaign } from "@/lib/api";
 import { Mail, ArrowUpRight, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 
-export const Route = createFileRoute("/app/campaigns")({
+export const Route = createFileRoute("/app/campaigns/")({
   head: () => ({ meta: [{ title: "Campaigns — SecretVoIP Mail" }] }),
   component: CampaignsPage,
 });

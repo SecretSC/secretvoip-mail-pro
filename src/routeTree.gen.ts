@@ -17,8 +17,8 @@ import { Route as AppTemplatesRouteImport } from './routes/app.templates'
 import { Route as AppSendRouteImport } from './routes/app.send'
 import { Route as AppProfileRouteImport } from './routes/app.profile'
 import { Route as AppHelpRouteImport } from './routes/app.help'
-import { Route as AppCampaignsRouteImport } from './routes/app.campaigns'
 import { Route as AppAdminRouteImport } from './routes/app.admin'
+import { Route as AppCampaignsIndexRouteImport } from './routes/app.campaigns.index'
 import { Route as AppAdminIndexRouteImport } from './routes/app.admin.index'
 import { Route as AppCampaignsIdRouteImport } from './routes/app.campaigns.$id'
 import { Route as AppAdminTemplatesRouteImport } from './routes/app.admin.templates'
@@ -67,14 +67,14 @@ const AppHelpRoute = AppHelpRouteImport.update({
   path: '/help',
   getParentRoute: () => AppRoute,
 } as any)
-const AppCampaignsRoute = AppCampaignsRouteImport.update({
-  id: '/campaigns',
-  path: '/campaigns',
-  getParentRoute: () => AppRoute,
-} as any)
 const AppAdminRoute = AppAdminRouteImport.update({
   id: '/admin',
   path: '/admin',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppCampaignsIndexRoute = AppCampaignsIndexRouteImport.update({
+  id: '/campaigns/',
+  path: '/campaigns/',
   getParentRoute: () => AppRoute,
 } as any)
 const AppAdminIndexRoute = AppAdminIndexRouteImport.update({
@@ -83,9 +83,9 @@ const AppAdminIndexRoute = AppAdminIndexRouteImport.update({
   getParentRoute: () => AppAdminRoute,
 } as any)
 const AppCampaignsIdRoute = AppCampaignsIdRouteImport.update({
-  id: '/$id',
-  path: '/$id',
-  getParentRoute: () => AppCampaignsRoute,
+  id: '/campaigns/$id',
+  path: '/campaigns/$id',
+  getParentRoute: () => AppRoute,
 } as any)
 const AppAdminTemplatesRoute = AppAdminTemplatesRouteImport.update({
   id: '/templates',
@@ -118,7 +118,6 @@ export interface FileRoutesByFullPath {
   '/app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
   '/app/admin': typeof AppAdminRouteWithChildren
-  '/app/campaigns': typeof AppCampaignsRouteWithChildren
   '/app/help': typeof AppHelpRoute
   '/app/profile': typeof AppProfileRoute
   '/app/send': typeof AppSendRoute
@@ -131,11 +130,11 @@ export interface FileRoutesByFullPath {
   '/app/admin/templates': typeof AppAdminTemplatesRoute
   '/app/campaigns/$id': typeof AppCampaignsIdRoute
   '/app/admin/': typeof AppAdminIndexRoute
+  '/app/campaigns/': typeof AppCampaignsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
-  '/app/campaigns': typeof AppCampaignsRouteWithChildren
   '/app/help': typeof AppHelpRoute
   '/app/profile': typeof AppProfileRoute
   '/app/send': typeof AppSendRoute
@@ -148,6 +147,7 @@ export interface FileRoutesByTo {
   '/app/admin/templates': typeof AppAdminTemplatesRoute
   '/app/campaigns/$id': typeof AppCampaignsIdRoute
   '/app/admin': typeof AppAdminIndexRoute
+  '/app/campaigns': typeof AppCampaignsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -155,7 +155,6 @@ export interface FileRoutesById {
   '/app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
   '/app/admin': typeof AppAdminRouteWithChildren
-  '/app/campaigns': typeof AppCampaignsRouteWithChildren
   '/app/help': typeof AppHelpRoute
   '/app/profile': typeof AppProfileRoute
   '/app/send': typeof AppSendRoute
@@ -168,6 +167,7 @@ export interface FileRoutesById {
   '/app/admin/templates': typeof AppAdminTemplatesRoute
   '/app/campaigns/$id': typeof AppCampaignsIdRoute
   '/app/admin/': typeof AppAdminIndexRoute
+  '/app/campaigns/': typeof AppCampaignsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -176,7 +176,6 @@ export interface FileRouteTypes {
     | '/app'
     | '/login'
     | '/app/admin'
-    | '/app/campaigns'
     | '/app/help'
     | '/app/profile'
     | '/app/send'
@@ -189,11 +188,11 @@ export interface FileRouteTypes {
     | '/app/admin/templates'
     | '/app/campaigns/$id'
     | '/app/admin/'
+    | '/app/campaigns/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/login'
-    | '/app/campaigns'
     | '/app/help'
     | '/app/profile'
     | '/app/send'
@@ -206,13 +205,13 @@ export interface FileRouteTypes {
     | '/app/admin/templates'
     | '/app/campaigns/$id'
     | '/app/admin'
+    | '/app/campaigns'
   id:
     | '__root__'
     | '/'
     | '/app'
     | '/login'
     | '/app/admin'
-    | '/app/campaigns'
     | '/app/help'
     | '/app/profile'
     | '/app/send'
@@ -225,6 +224,7 @@ export interface FileRouteTypes {
     | '/app/admin/templates'
     | '/app/campaigns/$id'
     | '/app/admin/'
+    | '/app/campaigns/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -291,18 +291,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppHelpRouteImport
       parentRoute: typeof AppRoute
     }
-    '/app/campaigns': {
-      id: '/app/campaigns'
-      path: '/campaigns'
-      fullPath: '/app/campaigns'
-      preLoaderRoute: typeof AppCampaignsRouteImport
-      parentRoute: typeof AppRoute
-    }
     '/app/admin': {
       id: '/app/admin'
       path: '/admin'
       fullPath: '/app/admin'
       preLoaderRoute: typeof AppAdminRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/campaigns/': {
+      id: '/app/campaigns/'
+      path: '/campaigns'
+      fullPath: '/app/campaigns/'
+      preLoaderRoute: typeof AppCampaignsIndexRouteImport
       parentRoute: typeof AppRoute
     }
     '/app/admin/': {
@@ -314,10 +314,10 @@ declare module '@tanstack/react-router' {
     }
     '/app/campaigns/$id': {
       id: '/app/campaigns/$id'
-      path: '/$id'
+      path: '/campaigns/$id'
       fullPath: '/app/campaigns/$id'
       preLoaderRoute: typeof AppCampaignsIdRouteImport
-      parentRoute: typeof AppCampaignsRoute
+      parentRoute: typeof AppRoute
     }
     '/app/admin/templates': {
       id: '/app/admin/templates'
@@ -379,36 +379,26 @@ const AppAdminRouteWithChildren = AppAdminRoute._addFileChildren(
   AppAdminRouteChildren,
 )
 
-interface AppCampaignsRouteChildren {
-  AppCampaignsIdRoute: typeof AppCampaignsIdRoute
-}
-
-const AppCampaignsRouteChildren: AppCampaignsRouteChildren = {
-  AppCampaignsIdRoute: AppCampaignsIdRoute,
-}
-
-const AppCampaignsRouteWithChildren = AppCampaignsRoute._addFileChildren(
-  AppCampaignsRouteChildren,
-)
-
 interface AppRouteChildren {
   AppAdminRoute: typeof AppAdminRouteWithChildren
-  AppCampaignsRoute: typeof AppCampaignsRouteWithChildren
   AppHelpRoute: typeof AppHelpRoute
   AppProfileRoute: typeof AppProfileRoute
   AppSendRoute: typeof AppSendRoute
   AppTemplatesRoute: typeof AppTemplatesRoute
   AppIndexRoute: typeof AppIndexRoute
+  AppCampaignsIdRoute: typeof AppCampaignsIdRoute
+  AppCampaignsIndexRoute: typeof AppCampaignsIndexRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
   AppAdminRoute: AppAdminRouteWithChildren,
-  AppCampaignsRoute: AppCampaignsRouteWithChildren,
   AppHelpRoute: AppHelpRoute,
   AppProfileRoute: AppProfileRoute,
   AppSendRoute: AppSendRoute,
   AppTemplatesRoute: AppTemplatesRoute,
   AppIndexRoute: AppIndexRoute,
+  AppCampaignsIdRoute: AppCampaignsIdRoute,
+  AppCampaignsIndexRoute: AppCampaignsIndexRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
