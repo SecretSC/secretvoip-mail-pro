@@ -1,8 +1,29 @@
 import { Router } from "express";
 import { requireAuth } from "../auth.js";
 import { query } from "../db.js";
+import { config } from "../config.js";
 
 const router = Router();
+
+// Proxy upstream monthly quota
+router.get("/me/quota", requireAuth, async (_req, res) => {
+  try {
+    const resp = await fetch(`${config.mailProviderBaseUrl}/api/public/stats`, {
+      headers: { Authorization: `Bearer ${config.mailProviderApiKey}` },
+    });
+    const txt = await resp.text();
+    const body = txt ? (() => { try { return JSON.parse(txt); } catch { return {}; } })() : {};
+    if (!resp.ok) return res.status(502).json({ error: body?.error || `Provider responded ${resp.status}` });
+    res.json({
+      monthlySent: Number(body.monthlySent ?? 0),
+      monthlyLimit: Number(body.monthlyLimit ?? 0),
+      monthlyRemaining: Number(body.monthlyRemaining ?? Math.max(0, (body.monthlyLimit ?? 0) - (body.monthlySent ?? 0))),
+      bounceCounts: body.bounceCounts ?? null,
+    });
+  } catch (err: any) {
+    res.status(502).json({ error: String(err?.message || err) });
+  }
+});
 
 router.get("/me", requireAuth, (req, res) => {
   res.json(req.user);
