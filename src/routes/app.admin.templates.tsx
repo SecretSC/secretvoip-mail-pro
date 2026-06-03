@@ -79,12 +79,30 @@ function AdminTemplatesPage() {
             Build premium templates and assign them to selected customers.
           </p>
         </div>
-        <button onClick={startNew}
-          className="inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold text-primary-foreground glow-primary"
-          style={{ background: "var(--gradient-primary)" }}>
-          <Plus size={14} /> New private template
-        </button>
+        {tab === "private" && (
+          <button onClick={startNew}
+            className="inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold text-primary-foreground glow-primary"
+            style={{ background: "var(--gradient-primary)" }}>
+            <Plus size={14} /> New private template
+          </button>
+        )}
       </header>
+
+      <div className="mt-4 flex gap-1 border-b border-border">
+        <button onClick={() => setTab("private")}
+          className={`px-4 py-2 text-sm font-semibold border-b-2 inline-flex items-center gap-2 ${
+            tab === "private" ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}>
+          <ShieldCheck size={14} /> Admin Private Templates
+        </button>
+        <button onClick={() => setTab("customer")}
+          className={`px-4 py-2 text-sm font-semibold border-b-2 inline-flex items-center gap-2 ${
+            tab === "customer" ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}>
+          <UserCircle2 size={14} /> Customer Templates
+        </button>
+      </div>
+
+      {tab === "customer" ? <CustomerTemplatesPanel /> : null}
+      {tab === "private" && (
 
       <div className="mt-6 grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-6">
         <aside className="glass rounded-2xl p-3 space-y-1 h-max">
