@@ -112,7 +112,6 @@ function CampaignsPage() {
 }
 
 function StatusPill({ status }: { status: Campaign["status"] }) {
-function StatusPill({ status }: { status: Campaign["status"] }) {
   const map: Record<string, string> = {
     completed: "bg-success/15 text-success border-success/40",
     partial:   "bg-warning/15 text-warning border-warning/40",
