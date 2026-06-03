@@ -59,6 +59,10 @@ export interface MeUser {
   balance: number;
 }
 
+export type CampaignStatus =
+  | "queued" | "processing" | "sending"
+  | "completed" | "failed" | "partial" | "cancelled";
+
 export interface Campaign {
   id: string;
   fromName: string;
@@ -67,19 +71,61 @@ export interface Campaign {
   accepted: number;
   failed: number;
   cost: number;
-  status: "sending" | "completed" | "failed";
+  status: CampaignStatus;
   createdAt: string;
   pricePerEmail: number;
+  // progress
+  queuedCount?: number;
+  processingCount?: number;
+  deliveredCount?: number;
+  bouncedCount?: number;
+  delayedCount?: number;
+  invalidCount?: number;
+  lastSyncedAt?: string | null;
+  finalized?: boolean;
   // admin-only
   providerCost?: number;
   profit?: number;
   providerCostPerEmail?: number;
   providerResponse?: any;
+  providerJobId?: string;
   userEmail?: string;
   userName?: string;
 }
 
-export interface Recipient { email: string; accepted: boolean; error: string | null; createdAt: string; }
+export interface Recipient {
+  email: string;
+  accepted: boolean;
+  status?: string;
+  error: string | null;
+  createdAt: string;
+  lastEventAt?: string | null;
+}
+
+export interface ActiveCampaign {
+  id: string;
+  subject: string;
+  status: CampaignStatus;
+  total: number;
+  queuedCount: number;
+  processingCount: number;
+  deliveredCount: number;
+  bouncedCount: number;
+  createdAt: string;
+}
+
+export interface TransmissionEntry {
+  email: string;
+  status: string;
+  reason: string | null;
+  eventType: string | null;
+  lastEventAt: string | null;
+  createdAt: string;
+  campaignId: string;
+  subject: string;
+  fromName: string;
+  userEmail?: string | null;
+}
 
 export interface Template {
   id: string; name: string; subject: string; html: string;
