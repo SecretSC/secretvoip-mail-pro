@@ -189,8 +189,21 @@ export const api = {
     request<{ campaign: Campaign & { html: string; error: string | null }; recipients: Recipient[] }>(
       `/api/campaigns/${id}`),
   syncCampaign: (id: string) =>
-    request<{ ok: boolean; finalized: boolean; status?: string; counts?: Record<string, number> }>(
-      `/api/campaigns/${id}/sync`, { method: "POST" }),
+    request<{
+      ok: boolean; finalized: boolean; status?: string;
+      counts?: Record<string, number>;
+      live?: {
+        status: string; total: number; sent: number; failed: number; pending: number;
+        progressPct: number; ratePerSec: number; etaSeconds: number; elapsedSec: number;
+        bounceCounts: Record<string, number> | null;
+      };
+    }>(`/api/campaigns/${id}/sync`, { method: "POST" }),
+  cancelCampaign: (id: string) =>
+    request<{ ok: boolean; status: string; sent?: number; failed?: number; total?: number; alreadyFinal?: boolean }>(
+      `/api/campaigns/${id}/cancel`, { method: "POST" }),
+  mailStats: () =>
+    request<{ monthlySent: number; monthlyLimit: number; monthlyRemaining: number; bounceCounts: Record<string, number> | null }>(
+      `/api/me/quota`),
   exportCampaignCsv: (id: string) =>
     downloadFile(`/api/campaigns/${id}/export.csv`, `campaign-${id}.csv`),
   transmissionLog: (opts: { userId?: string } = {}) =>

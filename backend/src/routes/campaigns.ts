@@ -252,7 +252,69 @@ router.post("/:id/sync", async (req, res) => {
   res.json({
     ok: true, finalized: false, status: mappedStatus,
     counts: { queued, processing, delivered: sent, failed, bounced, invalid, delayed },
+    live: {
+      status: providerStatus || mappedStatus,
+      total: Number(job.total ?? camp[0].total ?? 0),
+      sent, failed,
+      pending: Number(job.pending ?? (queued + processing)),
+      progressPct: Number(job.progressPct ?? job.progress_pct ?? 0),
+      ratePerSec: Number(job.ratePerSec ?? job.rate_per_sec ?? 0),
+      etaSeconds: Number(job.etaSeconds ?? job.eta_seconds ?? 0),
+      elapsedSec: Number(job.elapsedSec ?? job.elapsed_sec ?? 0),
+      bounceCounts: job.bounceCounts ?? job.bounce_counts ?? null,
+    },
   });
+});
+
+// ============================================================
+// Cancel a running campaign (proxies provider cancel)
+// ============================================================
+router.post("/:id/cancel", async (req, res) => {
+  const user = req.user!;
+  const { rows: camp } = await query<{ userId: string; providerJobId: string | null; finalized: boolean; status: string }>(
+    `SELECT user_id AS "userId", provider_job_id AS "providerJobId",
+            finalized, status
+       FROM email_campaigns WHERE id=$1`,
+    [req.params.id],
+  );
+  if (camp.length === 0) return res.status(404).json({ error: "Not found" });
+  if (user.role !== "admin" && camp[0].userId !== user.id) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+  if (camp[0].finalized) return res.json({ ok: true, status: camp[0].status, alreadyFinal: true });
+  if (!camp[0].providerJobId) return res.status(400).json({ error: "No provider job id" });
+
+  try {
+    const resp = await fetch(
+      `${config.mailProviderBaseUrl}/api/public/job/${encodeURIComponent(camp[0].providerJobId)}/cancel`,
+      { method: "POST", headers: { Authorization: `Bearer ${config.mailProviderApiKey}` } },
+    );
+    const txt = await resp.text();
+    const body = txt ? (() => { try { return JSON.parse(txt); } catch { return {}; } })() : {};
+    if (!resp.ok) return res.status(502).json({ error: body?.error || `Provider responded ${resp.status}` });
+
+    await query(
+      `UPDATE email_campaigns SET status='cancelled', last_synced_at=now() WHERE id=$1`,
+      [req.params.id],
+    );
+    await query(
+      `UPDATE email_results SET status='cancelled', last_event_at=now()
+        WHERE campaign_id=$1 AND status IN ('queued','processing','sending')`,
+      [req.params.id],
+    );
+    await query(
+      `INSERT INTO activity_logs (user_id, action, metadata) VALUES ($1, 'campaign_cancel', $2)`,
+      [user.id, JSON.stringify({ campaignId: req.params.id, jobId: camp[0].providerJobId })],
+    );
+    return res.json({
+      ok: true, status: "cancelled",
+      sent: Number(body.sent ?? 0),
+      failed: Number(body.failed ?? 0),
+      total: Number(body.total ?? 0),
+    });
+  } catch (err: any) {
+    return res.status(502).json({ error: String(err?.message || err) });
+  }
 });
 
 // ============================================================
