@@ -58,17 +58,18 @@ export function CustomerHistoryModal({ customer, onClose }: Props) {
     }
   }
 
+  const ident = customer.username || customer.email || customer.fullName;
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center p-4 bg-background/80 backdrop-blur-md">
-      <div className="w-full max-w-6xl max-h-[92vh] flex flex-col glass card-ring-primary rounded-2xl overflow-hidden">
-        <div className="px-6 py-4 border-b border-border flex items-center gap-4">
-          <div className="flex-1">
+    <div className="fixed inset-0 z-50 grid place-items-center p-2 sm:p-4 bg-background/80 backdrop-blur-md">
+      <div className="w-full max-w-6xl max-h-[95vh] flex flex-col glass card-ring-primary rounded-2xl overflow-hidden">
+        <div className="px-4 sm:px-6 py-4 border-b border-border flex items-center gap-4">
+          <div className="flex-1 min-w-0">
             <div className="text-[0.625rem] uppercase tracking-[0.18em] font-semibold text-muted-foreground">
               Customer history
             </div>
-            <div className="text-lg font-bold">
-              {customer.fullName}{" "}
-              <span className="text-sm font-normal text-muted-foreground">· {customer.email}</span>
+            <div className="text-lg font-bold truncate">
+              {ident}{" "}
+              <span className="text-sm font-normal text-muted-foreground">· {customer.fullName}</span>
             </div>
           </div>
           <button onClick={onClose} className="p-2 rounded-md hover:bg-card/60">
@@ -202,8 +203,9 @@ export function CustomerHistoryModal({ customer, onClose }: Props) {
                             : "bg-info/15 text-info"
                           }`}>{c.status}</span>
                         </td>
-                        <td className="px-3 py-2 text-right">
-                          <button onClick={() => openRecipients(c.id)} className="text-info hover:underline">Recipients</button>
+                        <td className="px-3 py-2 text-right whitespace-nowrap">
+                          <button onClick={() => openRecipients(c.id)} className="text-info hover:underline mr-2">Recipients</button>
+                          <a href={`/mail/app/campaigns/${c.id}`} target="_blank" rel="noreferrer" className="text-foreground hover:underline">View details</a>
                         </td>
                       </tr>
                     ))}
