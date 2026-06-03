@@ -295,7 +295,7 @@ export function CustomerHistoryModal({ customer, onClose }: Props) {
                 </table>
               </div>
             </div>
-          ) : (
+          ) : tab === "activity" ? (
             <div className="p-5">
               <div className="space-y-2">
                 {data.activity.map((a) => (
@@ -312,6 +312,8 @@ export function CustomerHistoryModal({ customer, onClose }: Props) {
                 )}
               </div>
             </div>
+          ) : (
+            <TransmissionPanel userId={customer.id} />
           )}
         </div>
       </div>
