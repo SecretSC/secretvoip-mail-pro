@@ -179,16 +179,24 @@ export const api = {
     }>("/api/me/stats"),
 
   sendEmail: (payload: { fromName: string; subject: string; html: string; recipients: string[] }) =>
-    request<{ campaignId: string; sent: number; failed: number; total: number; charged: number; results: { email: string; ok: boolean; error?: string }[] }>(
+    request<{ campaignId: string; status: CampaignStatus; jobId?: string; queued?: number; sent?: number; failed?: number; total?: number; charged?: number; results?: { email: string; ok: boolean; error?: string }[]; message?: string }>(
       "/api/email/send", { method: "POST", body: JSON.stringify(payload) }),
 
   campaigns: (opts: { all?: boolean } = {}) =>
     request<Campaign[]>(`/api/campaigns${opts.all ? "?all=1" : ""}`),
+  activeCampaign: () => request<ActiveCampaign | null>("/api/campaigns/active"),
   campaign: (id: string) =>
     request<{ campaign: Campaign & { html: string; error: string | null }; recipients: Recipient[] }>(
       `/api/campaigns/${id}`),
+  syncCampaign: (id: string) =>
+    request<{ ok: boolean; finalized: boolean; status?: string; counts?: Record<string, number> }>(
+      `/api/campaigns/${id}/sync`, { method: "POST" }),
   exportCampaignCsv: (id: string) =>
     downloadFile(`/api/campaigns/${id}/export.csv`, `campaign-${id}.csv`),
+  transmissionLog: (opts: { userId?: string } = {}) =>
+    request<TransmissionEntry[]>(`/api/campaigns/log/transmission${opts.userId ? `?userId=${opts.userId}` : ""}`),
+  exportTransmissionCsv: (opts: { userId?: string } = {}) =>
+    downloadFile(`/api/campaigns/log/transmission.csv${opts.userId ? `?userId=${opts.userId}` : ""}`, `transmission-log.csv`),
 
   // Customer templates (own + assigned)
   templates: () => request<Template[]>("/api/templates"),
