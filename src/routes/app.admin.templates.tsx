@@ -1,17 +1,19 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { api, type Customer, type PrivateTemplate } from "@/lib/api";
+import { api, type Customer, type PrivateTemplate, type Template } from "@/lib/api";
 import { toast } from "sonner";
-import { Plus, Save, Trash2, Eye, Code2, X, FileText, Users, Check } from "lucide-react";
+import { Plus, Save, Trash2, Eye, Code2, X, FileText, Users, Check, ShieldCheck, UserCircle2 } from "lucide-react";
 
 export const Route = createFileRoute("/app/admin/templates")({
-  head: () => ({ meta: [{ title: "Private Templates — Admin" }] }),
+  head: () => ({ meta: [{ title: "Templates — Admin" }] }),
   component: AdminTemplatesPage,
 });
 
 type Mode = "html" | "preview" | "split";
+type Tab = "private" | "customer";
 
 function AdminTemplatesPage() {
+  const [tab, setTab] = useState<Tab>("private");
   const [items, setItems] = useState<PrivateTemplate[] | null>(null);
   const [active, setActive] = useState<PrivateTemplate | null>(null);
   const [name, setName] = useState("");
@@ -77,12 +79,30 @@ function AdminTemplatesPage() {
             Build premium templates and assign them to selected customers.
           </p>
         </div>
-        <button onClick={startNew}
-          className="inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold text-primary-foreground glow-primary"
-          style={{ background: "var(--gradient-primary)" }}>
-          <Plus size={14} /> New private template
-        </button>
+        {tab === "private" && (
+          <button onClick={startNew}
+            className="inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold text-primary-foreground glow-primary"
+            style={{ background: "var(--gradient-primary)" }}>
+            <Plus size={14} /> New private template
+          </button>
+        )}
       </header>
+
+      <div className="mt-4 flex gap-1 border-b border-border">
+        <button onClick={() => setTab("private")}
+          className={`px-4 py-2 text-sm font-semibold border-b-2 inline-flex items-center gap-2 ${
+            tab === "private" ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}>
+          <ShieldCheck size={14} /> Admin Private Templates
+        </button>
+        <button onClick={() => setTab("customer")}
+          className={`px-4 py-2 text-sm font-semibold border-b-2 inline-flex items-center gap-2 ${
+            tab === "customer" ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}>
+          <UserCircle2 size={14} /> Customer Templates
+        </button>
+      </div>
+
+      {tab === "customer" ? <CustomerTemplatesPanel /> : null}
+      {tab === "private" && (
 
       <div className="mt-6 grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-6">
         <aside className="glass rounded-2xl p-3 space-y-1 h-max">
@@ -176,9 +196,9 @@ function AdminTemplatesPage() {
           </div>
         </section>
       </div>
+      )}
 
       {assignFor && <AssignModal template={assignFor} onClose={() => setAssignFor(null)} onSaved={() => { setAssignFor(null); load().then(() => {
-        // re-open updated active row
         if (active) api.adminPrivateTemplates().then((all) => { const f = all.find((x) => x.id === active.id); if (f) setActive(f); });
       }); }} />}
 
@@ -272,6 +292,143 @@ function AssignModal({ template, onClose, onSaved }: { template: PrivateTemplate
             className="px-5 py-2 text-sm rounded-lg font-semibold text-primary-foreground glow-primary disabled:opacity-50"
             style={{ background: "var(--gradient-primary)" }}>
             {saving ? "Saving…" : "Save access"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// CUSTOMER TEMPLATES PANEL (admin moderation)
+// ============================================================
+function CustomerTemplatesPanel() {
+  type Row = Template & { userId: string; userEmail: string | null; userName: string | null };
+  const [rows, setRows] = useState<Row[] | null>(null);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [userId, setUserId] = useState<string>("");
+  const [search, setSearch] = useState("");
+  const [edit, setEdit] = useState<Row | null>(null);
+  const [preview, setPreview] = useState<Row | null>(null);
+
+  async function load() {
+    try { setRows(await api.adminCustomerTemplates(userId || undefined)); }
+    catch (e: any) { toast.error(e?.message || "Failed"); }
+  }
+  useEffect(() => { api.adminCustomers().then(setCustomers).catch(() => {}); }, []);
+  useEffect(() => { load(); }, [userId]);
+
+  const filtered = (rows || []).filter((r) => {
+    if (!search) return true;
+    const s = search.toLowerCase();
+    return `${r.name} ${r.subject} ${r.userEmail || ""}`.toLowerCase().includes(s);
+  });
+
+  async function remove(r: Row) {
+    if (!confirm(`Delete "${r.name}" from ${r.userEmail || "customer"}?`)) return;
+    try { await api.adminDeleteCustomerTemplate(r.id); toast.success("Deleted"); load(); }
+    catch (e: any) { toast.error(e?.message || "Failed"); }
+  }
+
+  return (
+    <div className="mt-6 space-y-4">
+      <div className="glass rounded-2xl p-4 flex flex-wrap items-center gap-3">
+        <select value={userId} onChange={(e) => setUserId(e.target.value)}
+          className="tpl-input max-w-xs">
+          <option value="">All customers</option>
+          {customers.map((c) => (
+            <option key={c.id} value={c.id}>{c.username || c.fullName}</option>
+          ))}
+        </select>
+        <input placeholder="Search template / subject / user…" value={search}
+          onChange={(e) => setSearch(e.target.value)} className="tpl-input flex-1 min-w-[200px]" />
+      </div>
+
+      <div className="glass rounded-2xl overflow-hidden">
+        <div className="overflow-x-auto">
+          {rows === null ? <div className="p-10 text-center text-sm text-muted-foreground">Loading…</div>
+          : filtered.length === 0 ? <div className="p-10 text-center text-sm text-muted-foreground">No templates.</div>
+          : (
+            <table className="w-full text-xs">
+              <thead className="bg-card/40">
+                <tr className="text-left uppercase tracking-wider text-[0.625rem] text-muted-foreground">
+                  <th className="px-4 py-2">Customer</th>
+                  <th className="px-4 py-2">Name</th>
+                  <th className="px-4 py-2">Subject</th>
+                  <th className="px-4 py-2">Updated</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((r) => (
+                  <tr key={r.id} className="border-t border-border/40 hover:bg-card/30">
+                    <td className="px-4 py-2">{r.userEmail || r.userName || "—"}</td>
+                    <td className="px-4 py-2 font-semibold">{r.name}</td>
+                    <td className="px-4 py-2 truncate max-w-[280px]">{r.subject}</td>
+                    <td className="px-4 py-2 text-muted-foreground">{new Date(r.updatedAt).toLocaleString()}</td>
+                    <td className="px-4 py-2 text-right whitespace-nowrap">
+                      <button onClick={() => setPreview(r)} className="text-info hover:underline mr-3">Preview</button>
+                      <button onClick={() => setEdit(r)} className="text-foreground hover:underline mr-3">Edit</button>
+                      <button onClick={() => remove(r)} className="text-destructive hover:underline">Delete</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+
+      {edit && <EditCustomerTemplateModal row={edit} onClose={() => setEdit(null)} onSaved={() => { setEdit(null); load(); }} />}
+      {preview && (
+        <div className="fixed inset-0 z-50 grid place-items-center p-4 bg-background/80 backdrop-blur-sm">
+          <div className="glass-strong rounded-2xl max-w-3xl w-full max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-border">
+              <div>
+                <div className="text-sm font-semibold">{preview.name}</div>
+                <div className="text-xs text-muted-foreground">{preview.subject}</div>
+              </div>
+              <button onClick={() => setPreview(null)}><X size={16} /></button>
+            </div>
+            <iframe title="preview" className="w-full flex-1 bg-white" sandbox="" srcDoc={preview.html} />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EditCustomerTemplateModal({ row, onClose, onSaved }: { row: Template; onClose: () => void; onSaved: () => void }) {
+  const [name, setName] = useState(row.name);
+  const [subject, setSubject] = useState(row.subject);
+  const [html, setHtml] = useState(row.html);
+  const [saving, setSaving] = useState(false);
+  async function save() {
+    setSaving(true);
+    try {
+      await api.adminUpdateCustomerTemplate(row.id, { name, subject, html });
+      toast.success("Updated"); onSaved();
+    } catch (e: any) { toast.error(e?.message || "Failed"); }
+    finally { setSaving(false); }
+  }
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center p-4 bg-background/80 backdrop-blur-sm">
+      <div className="glass-strong rounded-2xl max-w-4xl w-full max-h-[92vh] flex flex-col">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-border">
+          <h3 className="text-lg font-bold">Edit customer template</h3>
+          <button onClick={onClose}><X size={16} /></button>
+        </div>
+        <div className="p-5 space-y-3 overflow-auto">
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" className="tpl-input" />
+          <input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Subject" className="tpl-input" />
+          <textarea value={html} onChange={(e) => setHtml(e.target.value)} rows={14} className="tpl-input font-mono text-xs" />
+        </div>
+        <div className="flex justify-end gap-2 p-4 border-t border-border">
+          <button onClick={onClose} className="px-4 py-2 text-sm text-muted-foreground">Cancel</button>
+          <button onClick={save} disabled={saving}
+            className="px-5 py-2 text-sm rounded-lg font-semibold text-primary-foreground glow-primary disabled:opacity-50"
+            style={{ background: "var(--gradient-primary)" }}>
+            {saving ? "Saving…" : "Save changes"}
           </button>
         </div>
       </div>

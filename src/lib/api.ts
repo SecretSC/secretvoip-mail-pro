@@ -59,6 +59,10 @@ export interface MeUser {
   balance: number;
 }
 
+export type CampaignStatus =
+  | "queued" | "processing" | "sending"
+  | "completed" | "failed" | "partial" | "cancelled";
+
 export interface Campaign {
   id: string;
   fromName: string;
@@ -67,19 +71,61 @@ export interface Campaign {
   accepted: number;
   failed: number;
   cost: number;
-  status: "sending" | "completed" | "failed";
+  status: CampaignStatus;
   createdAt: string;
   pricePerEmail: number;
+  // progress
+  queuedCount?: number;
+  processingCount?: number;
+  deliveredCount?: number;
+  bouncedCount?: number;
+  delayedCount?: number;
+  invalidCount?: number;
+  lastSyncedAt?: string | null;
+  finalized?: boolean;
   // admin-only
   providerCost?: number;
   profit?: number;
   providerCostPerEmail?: number;
   providerResponse?: any;
+  providerJobId?: string;
   userEmail?: string;
   userName?: string;
 }
 
-export interface Recipient { email: string; accepted: boolean; error: string | null; createdAt: string; }
+export interface Recipient {
+  email: string;
+  accepted: boolean;
+  status?: string;
+  error: string | null;
+  createdAt: string;
+  lastEventAt?: string | null;
+}
+
+export interface ActiveCampaign {
+  id: string;
+  subject: string;
+  status: CampaignStatus;
+  total: number;
+  queuedCount: number;
+  processingCount: number;
+  deliveredCount: number;
+  bouncedCount: number;
+  createdAt: string;
+}
+
+export interface TransmissionEntry {
+  email: string;
+  status: string;
+  reason: string | null;
+  eventType: string | null;
+  lastEventAt: string | null;
+  createdAt: string;
+  campaignId: string;
+  subject: string;
+  fromName: string;
+  userEmail?: string | null;
+}
 
 export interface Template {
   id: string; name: string; subject: string; html: string;
@@ -133,16 +179,24 @@ export const api = {
     }>("/api/me/stats"),
 
   sendEmail: (payload: { fromName: string; subject: string; html: string; recipients: string[] }) =>
-    request<{ campaignId: string; sent: number; failed: number; total: number; charged: number; results: { email: string; ok: boolean; error?: string }[] }>(
+    request<{ campaignId: string; status: CampaignStatus; jobId?: string; queued?: number; sent?: number; failed?: number; total?: number; charged?: number; results?: { email: string; ok: boolean; error?: string }[]; message?: string }>(
       "/api/email/send", { method: "POST", body: JSON.stringify(payload) }),
 
   campaigns: (opts: { all?: boolean } = {}) =>
     request<Campaign[]>(`/api/campaigns${opts.all ? "?all=1" : ""}`),
+  activeCampaign: () => request<ActiveCampaign | null>("/api/campaigns/active"),
   campaign: (id: string) =>
     request<{ campaign: Campaign & { html: string; error: string | null }; recipients: Recipient[] }>(
       `/api/campaigns/${id}`),
+  syncCampaign: (id: string) =>
+    request<{ ok: boolean; finalized: boolean; status?: string; counts?: Record<string, number> }>(
+      `/api/campaigns/${id}/sync`, { method: "POST" }),
   exportCampaignCsv: (id: string) =>
     downloadFile(`/api/campaigns/${id}/export.csv`, `campaign-${id}.csv`),
+  transmissionLog: (opts: { userId?: string } = {}) =>
+    request<TransmissionEntry[]>(`/api/campaigns/log/transmission${opts.userId ? `?userId=${opts.userId}` : ""}`),
+  exportTransmissionCsv: (opts: { userId?: string } = {}) =>
+    downloadFile(`/api/campaigns/log/transmission.csv${opts.userId ? `?userId=${opts.userId}` : ""}`, `transmission-log.csv`),
 
   // Customer templates (own + assigned)
   templates: () => request<Template[]>("/api/templates"),
@@ -222,6 +276,17 @@ export const api = {
     request<{ ok: true }>(`/api/admin/templates/${id}/assign`, { method: "POST", body: JSON.stringify({ userIds }) }),
   adminUnassignTemplate: (id: string, userIds: string[]) =>
     request<{ ok: true }>(`/api/admin/templates/${id}/unassign`, { method: "POST", body: JSON.stringify({ userIds }) }),
+
+  // Admin moderation of customer-owned templates
+  adminCustomerTemplates: (userId?: string) =>
+    request<(Template & { userId: string; userEmail: string | null; userName: string | null })[]>(
+      `/api/admin/customer-templates${userId ? `?userId=${userId}` : ""}`),
+  adminUpdateCustomerTemplate: (id: string, t: Pick<Template, "name" | "subject" | "html">) =>
+    request<{ ok: true }>(`/api/admin/customer-templates/${id}`, { method: "PUT", body: JSON.stringify(t) }),
+  adminDeleteCustomerTemplate: (id: string) =>
+    request<{ ok: true }>(`/api/admin/customer-templates/${id}`, { method: "DELETE" }),
+  adminCustomerTransmission: (id: string) =>
+    request<TransmissionEntry[]>(`/api/admin/customers/${id}/transmission`),
 
   // Settings
   settings: () => request<Record<string, any>>("/api/settings"),

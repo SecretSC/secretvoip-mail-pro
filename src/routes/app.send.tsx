@@ -1,7 +1,7 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
-import { Send, Wallet, AlertCircle, CheckCircle2, FileText, Save } from "lucide-react";
-import { api, type Template } from "@/lib/api";
+import { Send, Wallet, AlertCircle, CheckCircle2, FileText, Save, Loader2 } from "lucide-react";
+import { api, type Template, type ActiveCampaign } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { toast } from "sonner";
 
@@ -11,6 +11,7 @@ export const Route = createFileRoute("/app/send")({
 });
 
 const EMAIL_RE = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+const MAX_RECIPIENTS = 5000;
 
 function parseRecipients(raw: string) {
   const tokens = raw.split(/[\s,;]+/).map((t) => t.trim()).filter(Boolean);
@@ -32,13 +33,12 @@ export function SendEmailPage() {
   const [html, setHtml] = useState("");
   const [recipientsRaw, setRecipientsRaw] = useState("");
   const [sending, setSending] = useState(false);
-  const [progress, setProgress] = useState<{ sent: number; failed: number; total: number } | null>(null);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [pricePerEmail, setPricePerEmail] = useState<number | null>(null);
   const [support, setSupport] = useState("@Hamfranord");
+  const [active, setActive] = useState<ActiveCampaign | null>(null);
 
-  // Re-fetch price every time the page is visited or window is refocused —
-  // so admin price changes appear without needing customer to log out.
+  // ---- live data load
   useEffect(() => {
     let mounted = true;
     function loadPrice() {
@@ -54,6 +54,25 @@ export function SendEmailPage() {
     const onFocus = () => loadPrice();
     window.addEventListener("focus", onFocus);
     return () => { mounted = false; window.removeEventListener("focus", onFocus); };
+  }, []);
+
+  // ---- poll active campaign every 10s
+  useEffect(() => {
+    let alive = true;
+    async function tick() {
+      try {
+        const a = await api.activeCampaign();
+        if (!alive) return;
+        setActive(a);
+        if (a && !a.id.startsWith("__")) {
+          // also sync provider state
+          try { await api.syncCampaign(a.id); } catch {}
+        }
+      } catch {}
+    }
+    tick();
+    const t = setInterval(tick, 10_000);
+    return () => { alive = false; clearInterval(t); };
   }, []);
 
   const parsed = useMemo(() => parseRecipients(recipientsRaw), [recipientsRaw]);
@@ -92,22 +111,33 @@ export function SendEmailPage() {
 
   async function onSend(e: React.FormEvent) {
     e.preventDefault();
+    if (active) {
+      toast.error("Your previous campaign is still processing. Please wait until it completes.");
+      return;
+    }
     if (!fromName || !subject || !html || parsed.valid.length === 0) {
       toast.error("Fill in all fields and at least one valid recipient"); return;
     }
-    if (parsed.valid.length > 500) {
-      toast.error("Maximum 500 recipients per send"); return;
+    if (parsed.valid.length > MAX_RECIPIENTS) {
+      toast.error(`Maximum ${MAX_RECIPIENTS} recipients per campaign`); return;
     }
-    if ((user?.balance ?? 0) <= 0) {
+    if ((user?.balance ?? 0) < estimate) {
       toast.error(`Insufficient wallet balance — contact ${support} on Telegram to top up`); return;
     }
     setSending(true);
-    setProgress({ sent: 0, failed: 0, total: parsed.valid.length });
     try {
       const res = await api.sendEmail({ fromName, subject, html, recipients: parsed.valid });
-      setProgress({ sent: res.sent, failed: res.failed, total: res.total });
-      toast.success(`Campaign complete — ${res.sent}/${res.total} accepted · charged ${res.charged.toFixed(3)} €`);
+      if (res.status === "completed") {
+        const sent = res.sent ?? 0; const total = res.total ?? 0; const charged = res.charged ?? 0;
+        toast.success(`Campaign complete — ${sent}/${total} accepted · charged ${charged.toFixed(3)} €`);
+      } else {
+        toast.success(`Campaign queued (${res.queued ?? parsed.valid.length} recipients). Progress will update automatically.`);
+      }
+      // Clear form for next campaign
+      setRecipientsRaw("");
       await refresh();
+      // Force refresh of active status
+      api.activeCampaign().then(setActive).catch(() => {});
     } catch (err: any) {
       toast.error(err?.message || "Send failed");
     } finally { setSending(false); }
@@ -118,8 +148,10 @@ export function SendEmailPage() {
       <div>
         <header>
           <h1 className="text-2xl md:text-4xl font-bold tracking-tight">Send Email</h1>
-          <p className="mt-2 text-muted-foreground text-sm">Compose and dispatch a campaign.</p>
+          <p className="mt-2 text-muted-foreground text-sm">Compose and dispatch a campaign — up to {MAX_RECIPIENTS.toLocaleString()} recipients.</p>
         </header>
+
+        {active && <ActiveBanner active={active} onUpdate={setActive} />}
 
         <form onSubmit={onSend} className="mt-6 space-y-5">
           <div className="glass rounded-2xl p-4 flex flex-wrap items-center gap-3">
@@ -153,12 +185,12 @@ export function SendEmailPage() {
             </div>
 
             <Field label="Recipients *"
-              hint={`Up to 500 · ${parsed.valid.length} valid · ${parsed.invalid.length} invalid · ${parsed.duplicates} duplicates`}>
-              <textarea required rows={5} value={recipientsRaw}
+              hint={`Up to ${MAX_RECIPIENTS.toLocaleString()} · ${parsed.valid.length} valid · ${parsed.invalid.length} invalid · ${parsed.duplicates} duplicates`}>
+              <textarea required rows={6} value={recipientsRaw}
                 onChange={(e) => setRecipientsRaw(e.target.value)}
-                placeholder={"alice@example.com, bob@example.com\nor paste one per line"}
+                placeholder={"alice@example.com, bob@example.com\nor paste / upload one per line (CSV / TXT)"}
                 className="input font-mono text-xs" />
-              <div className="mt-2 flex items-center gap-3 text-xs">
+              <div className="mt-2 flex items-center gap-3 text-xs flex-wrap">
                 <label className="inline-flex items-center gap-2 cursor-pointer text-info hover:text-foreground">
                   <input type="file" accept=".csv,.txt" className="hidden" onChange={handleFile} />
                   Upload CSV or TXT
@@ -166,6 +198,11 @@ export function SendEmailPage() {
                 {parsed.invalid.length > 0 && (
                   <span className="text-destructive inline-flex items-center gap-1">
                     <AlertCircle size={12} /> {parsed.invalid.length} invalid will be skipped
+                  </span>
+                )}
+                {parsed.valid.length > MAX_RECIPIENTS && (
+                  <span className="text-destructive inline-flex items-center gap-1">
+                    <AlertCircle size={12} /> Maximum {MAX_RECIPIENTS.toLocaleString()} recipients per campaign
                   </span>
                 )}
               </div>
@@ -181,22 +218,16 @@ export function SendEmailPage() {
             </Field>
           </div>
 
-          <button type="submit" disabled={sending || parsed.valid.length === 0}
+          <button type="submit" disabled={sending || !!active || parsed.valid.length === 0 || parsed.valid.length > MAX_RECIPIENTS}
             className="w-full inline-flex items-center justify-center gap-2 rounded-xl px-6 py-4 text-sm font-semibold text-primary-foreground glow-primary disabled:opacity-50"
             style={{ background: "var(--gradient-primary)" }}>
-            <Send size={16} />
-            {sending
-              ? `Sending… ${progress?.sent ?? 0} / ${progress?.total ?? 0}`
-              : `Send to ${parsed.valid.length} recipient${parsed.valid.length === 1 ? "" : "s"}`}
+            {sending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+            {active
+              ? "Wait for current campaign to finish"
+              : sending
+                ? "Queueing campaign…"
+                : `Send to ${parsed.valid.length.toLocaleString()} recipient${parsed.valid.length === 1 ? "" : "s"}`}
           </button>
-
-          {progress && !sending && (
-            <div className="glass rounded-xl p-4 flex items-center gap-3 text-sm">
-              <CheckCircle2 size={18} className="text-success" />
-              <span>Accepted: <strong>{progress.sent}</strong> · Failed:{" "}
-                <strong className="text-destructive">{progress.failed}</strong> of {progress.total}</span>
-            </div>
-          )}
         </form>
       </div>
 
@@ -249,6 +280,58 @@ export function SendEmailPage() {
           box-shadow: 0 0 0 3px oklch(0.62 0.22 22 / 0.2);
         }
       `}</style>
+    </div>
+  );
+}
+
+function ActiveBanner({ active, onUpdate }: { active: ActiveCampaign; onUpdate: (a: ActiveCampaign | null) => void }) {
+  const total = active.total || 1;
+  const done = (active.deliveredCount || 0) + (active.bouncedCount || 0);
+  const pct = Math.min(100, Math.round((done / total) * 100));
+  async function refresh() {
+    try {
+      await api.syncCampaign(active.id);
+      const next = await api.activeCampaign();
+      onUpdate(next);
+    } catch {}
+  }
+  return (
+    <div className="mt-6 glass card-ring-primary rounded-2xl p-5 space-y-3 border border-info/30">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div className="flex items-center gap-2">
+          <Loader2 size={16} className="animate-spin text-info" />
+          <span className="text-sm font-semibold uppercase tracking-wider">{active.status}</span>
+          <span className="text-xs text-muted-foreground">· {active.subject}</span>
+        </div>
+        <div className="flex gap-2">
+          <button onClick={refresh} className="text-xs px-3 py-1.5 rounded-md glass hover:bg-card/60">Refresh</button>
+          <Link to="/app/campaigns/$id" params={{ id: active.id }} className="text-xs px-3 py-1.5 rounded-md glass hover:bg-card/60 text-info">Open detail</Link>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+        <Mini label="Total" value={total} />
+        <Mini label="Queued" value={active.queuedCount || 0} tone="info" />
+        <Mini label="Delivered" value={active.deliveredCount || 0} tone="success" />
+        <Mini label="Bounced" value={active.bouncedCount || 0} tone="destructive" />
+      </div>
+      <div>
+        <div className="flex justify-between text-[0.7rem] text-muted-foreground mb-1">
+          <span>Progress</span><span className="tabular-nums">{pct}%</span>
+        </div>
+        <div className="h-2 bg-card/40 rounded-full overflow-hidden">
+          <div className="h-full bg-gradient-to-r from-info to-primary transition-all" style={{ width: `${pct}%` }} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Mini({ label, value, tone }: { label: string; value: number; tone?: "info" | "success" | "destructive" }) {
+  const color = tone === "info" ? "text-info" : tone === "success" ? "text-success" : tone === "destructive" ? "text-destructive" : "text-foreground";
+  return (
+    <div className="glass rounded-lg p-2">
+      <div className="text-[0.6rem] uppercase tracking-wider text-muted-foreground">{label}</div>
+      <div className={`text-base font-bold tabular-nums ${color}`}>{value.toLocaleString()}</div>
     </div>
   );
 }
