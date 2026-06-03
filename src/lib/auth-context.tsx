@@ -26,9 +26,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const me = await api.me();
       setUser(me);
-    } catch {
-      setUser(null);
-      setToken(null);
+    } catch (err: any) {
+      // Only clear the session on real auth failures. Network blips, 5xx,
+      // or transient errors during heavy campaign polling must NOT log the
+      // user out — otherwise long-running bulk sends boot them.
+      const status = Number(err?.status);
+      if (status === 401 || status === 403) {
+        setUser(null);
+        setToken(null);
+      } else {
+        console.warn("[auth] refresh transient error — keeping session", err);
+      }
     }
   }, []);
 
