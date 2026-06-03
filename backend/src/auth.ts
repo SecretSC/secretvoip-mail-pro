@@ -6,7 +6,8 @@ import { query } from "./db.js";
 
 export interface AuthUser {
   id: string;
-  email: string;
+  email: string | null;
+  username: string | null;
   fullName: string;
   role: "admin" | "customer";
   status: "active" | "suspended";
@@ -50,7 +51,7 @@ export async function requireAuth(
     const payload = jwt.verify(token, config.jwtSecret) as { sub: string };
 
     const { rows } = await query<AuthUser>(
-      `SELECT id, email, full_name AS "fullName", role, status,
+      `SELECT id, email, username, full_name AS "fullName", role, status,
               balance::float AS balance
          FROM users WHERE id = $1 LIMIT 1`,
       [payload.sub],
